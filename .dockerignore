@@ -1,0 +1,28 @@
+# Dependencies and generated output
+node_modules
+dist
+coverage
+.nyc_output
+*.tsbuildinfo
+
+# VCS and editor files
+.git
+.github
+.vscode
+.idea
+
+# Secrets and local environment files (keep only the safe template)
+.env
+.env.*
+!.env.example
+!.env.docker.example
+.neon
+
+# Logs, local caches, and OS files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Local test artifacts
+*.test-results

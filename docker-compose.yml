@@ -1,0 +1,160 @@
+name: banking-platform
+
+services:
+
+  postgres:
+    image: postgres:17-bookworm
+    container_name: banking-postgres
+    environment:
+      POSTGRES_USER: banking_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in local .env}
+      POSTGRES_DB: banking_dev
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - banking_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking_app -d banking_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-bookworm
+    container_name: banking-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - banking_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+
+  # Isolated services for Vitest integration tests. They are opt-in and are
+  # never started by the normal development stack unless the "test" profile
+  # is explicitly selected.
+  test-postgres:
+    image: postgres:17-bookworm
+    profiles: ["test"]
+    container_name: banking-test-postgres
+    environment:
+      POSTGRES_USER: banking_test
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in local .env}
+      POSTGRES_DB: banking_test
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - banking_test_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking_test -d banking_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  test-redis:
+    image: redis:7.4-bookworm
+    profiles: ["test"]
+    container_name: banking-test-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - banking_test_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: banking-mailpit
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: banking-platform-backend:local
+    container_name: banking-migrate
+    env_file:
+      - .env.docker
+    command:
+      - npx
+      - prisma
+      - migrate
+      - deploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: banking-platform-backend:local
+    container_name: banking-backend
+    env_file:
+      - .env.docker
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  worker:
+    image: banking-platform-backend:local
+    container_name: banking-worker
+    env_file:
+      - .env.docker
+    command:
+      - node
+      - dist/jobs/worker.js
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+volumes:
+  banking_postgres_data:
+  banking_redis_data:
+  banking_test_postgres_data:
+  banking_test_redis_data:

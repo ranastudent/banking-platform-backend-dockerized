@@ -1,0 +1,47 @@
+﻿# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Environment files and secrets
+.env
+.env.*
+.env.example
+
+# Local database and secret directories
+.neon/
+secrets/
+.secrets/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# IDE and editor
+.vscode/
+.idea/
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Local AI agent tooling (not required for CI)
+.agents/
+
+# Accidental local files
+/12.2.1
+/docker
+/findstr
+
+# Database repair scripts - keep local only
+/prisma/scripts/repair/

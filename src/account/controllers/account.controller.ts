@@ -1,0 +1,146 @@
+import type { Request, Response } from "express";
+
+import { AppError } from "../../errors/AppError";
+import { ErrorCode } from "../../errors/errorCodes";
+import { createCustomerAccount, getCustomerAccounts, getCustomerAccountById, updateCustomerAccountStatus } from "../services/account.service";
+
+export const createAccount = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
+    );
+  }
+
+  const account = await createCustomerAccount(
+    req.user,
+    req.body,
+    {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    },
+  );
+
+  res.status(201).json({
+    success: true,
+    data: {
+      account,
+    },
+    requestId: req.requestId,
+  });
+};
+
+export const getAccounts = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
+    );
+  }
+
+  const accounts = await getCustomerAccounts(
+    req.user.id,
+  );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      accounts,
+    },
+    requestId: req.requestId,
+  });
+};
+
+export const getAccount = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
+    );
+  }
+
+  const { accountId } = req.params;
+
+  if (
+    typeof accountId !== "string" ||
+    accountId.trim() === ""
+  ) {
+    throw new AppError(
+      "Account ID is required",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  const account = await getCustomerAccountById(
+    accountId,
+    req.user.id,
+  );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      account,
+    },
+    requestId: req.requestId,
+  });
+};
+
+export const updateAccountStatus = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  if (!req.user) {
+    throw new AppError(
+      "Authentication required",
+      401,
+      ErrorCode.UNAUTHORIZED,
+    );
+  }
+
+  const { accountId } = req.params;
+
+  if (
+    typeof accountId !== "string" ||
+    accountId.trim() === ""
+  ) {
+    throw new AppError(
+      "Account ID is required",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  const { status } = req.body;
+
+  const account =
+    await updateCustomerAccountStatus(
+      accountId,
+      req.user.id,
+      status,
+      req.ip,
+      req.get("user-agent") ?? undefined,
+      req.requestId,
+    );
+
+  res.status(200).json({
+    success: true,
+    data: {
+      account,
+    },
+    requestId: req.requestId,
+  });
+};

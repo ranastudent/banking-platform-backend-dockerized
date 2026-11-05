@@ -1,0 +1,437 @@
+import { Prisma } from "@prisma/client";
+
+import { prisma } from "../../config/prisma";
+import { AppError } from "../../errors/AppError";
+import { ErrorCode } from "../../errors/errorCodes";
+import type { DepositInput } from "../../account/schemas/deposit.schema";
+import type { AuthUser } from "../../types/auth";
+import { randomUUID } from "crypto";
+import { writeAuditLog } from "../../audit/audit.service";
+import type { AuditContext } from "../../audit/audit.types";
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type DepositFailurePoint =
+  | "after-transaction"
+  | "after-balance"
+  | "after-ledger"
+  | "after-audit";
+
+type DepositServiceOptions = {
+  failurePoint?: DepositFailurePoint;
+  auditContext?: AuditContext;
+};
+
+const simulateDepositFailure = (
+  failurePoint: DepositFailurePoint | undefined,
+  currentPoint: DepositFailurePoint,
+): void => {
+  if (failurePoint === currentPoint) {
+    throw new Error(
+      `Simulated deposit failure at ${currentPoint}`,
+    );
+  }
+};
+
+type LockedAccountRow = {
+  id: string;
+  user_id: string;
+  account_number: string;
+  account_type: string;
+  status: string;
+};
+
+const lockDepositAccount = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+): Promise<LockedAccountRow> => {
+  const accounts = await tx.$queryRaw<LockedAccountRow[]>`
+    SELECT
+      id,
+      user_id,
+      account_number,
+      account_type,
+      status
+    FROM accounts
+    WHERE id = CAST(${accountId} AS uuid)
+    FOR UPDATE
+  `;
+
+  const account = accounts[0];
+
+  if (!account) {
+    throw new AppError(
+      "Account not found",
+      404,
+      ErrorCode.RESOURCE_NOT_FOUND,
+    );
+  }
+
+  return account;
+};
+
+const createDepositTransaction = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+) => {
+  return tx.transaction.create({
+    data: {
+      reference: `DEP-${randomUUID()}`,
+      type: "DEPOSIT",
+      status: "PENDING",
+      amount,
+      currencyCode,
+      provider: "INTERNAL",
+      destinationAccountId: accountId,
+      metadata: {
+        operation: "ACCOUNT_DEPOSIT",
+      },
+    },
+  });
+};
+
+const updateDepositBalance = async (
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  currencyCode: string,
+  amount: Prisma.Decimal,
+) => {
+  const existingBalance = await tx.accountBalance.findUnique({
+    where: {
+      accountId_currencyCode: {
+        accountId,
+        currencyCode,
+      },
+    },
+    select: {
+      id: true,
+      availableBalance: true,
+      lockedBalance: true,
+    },
+  });
+
+  if (!existingBalance) {
+    const createdBalance = await tx.accountBalance.create({
+      data: {
+        accountId,
+        currencyCode,
+        availableBalance: amount,
+        lockedBalance: new Prisma.Decimal(0),
+      },
+      select: {
+        id: true,
+        availableBalance: true,
+        lockedBalance: true,
+      },
+    });
+
+    return {
+      id: createdBalance.id,
+      balanceBefore: new Prisma.Decimal(0),
+      balanceAfter: createdBalance.availableBalance,
+      lockedBalance: createdBalance.lockedBalance,
+      currencyCode,
+    };
+  }
+
+  const updatedBalance = await tx.accountBalance.update({
+    where: {
+      id: existingBalance.id,
+    },
+    data: {
+      availableBalance: {
+        increment: amount,
+      },
+    },
+    select: {
+      id: true,
+      availableBalance: true,
+      lockedBalance: true,
+    },
+  });
+
+  return {
+    id: updatedBalance.id,
+    balanceBefore: existingBalance.availableBalance,
+    balanceAfter: updatedBalance.availableBalance,
+    lockedBalance: updatedBalance.lockedBalance,
+    currencyCode,
+  };
+};
+
+const createDepositLedgerEntry = async (
+  tx: Prisma.TransactionClient,
+  transactionId: string,
+  accountId: string,
+  currencyCode: string,
+  amount: Prisma.Decimal,
+  balanceBefore: Prisma.Decimal,
+  balanceAfter: Prisma.Decimal,
+) => {
+  return tx.ledgerEntry.create({
+    data: {
+      transactionId,
+      accountId,
+      currencyCode,
+      entryType: "CREDIT",
+      amount,
+      balanceBefore,
+      balanceAfter,
+    },
+    select: {
+      id: true,
+      transactionId: true,
+      accountId: true,
+      currencyCode: true,
+      entryType: true,
+      amount: true,
+      balanceBefore: true,
+      balanceAfter: true,
+      createdAt: true,
+    },
+  });
+};
+
+const createDepositAuditLog = async (
+  tx: Prisma.TransactionClient,
+  userId: string,
+  userRole: string,
+  accountId: string,
+  accountNumber: string,
+  transactionId: string,
+  transactionReference: string,
+  amount: Prisma.Decimal,
+  currencyCode: string,
+  auditContext: AuditContext = {},
+) => {
+  return writeAuditLog(
+    {
+      userId,
+      action: "DEPOSIT_CREATED",
+      resource: "TRANSACTION",
+      resourceId: transactionId,
+      description: `Deposit transaction ${transactionReference} created for account ${accountNumber}`,
+      ...auditContext,
+      metadata: {
+        operation: "ACCOUNT_DEPOSIT",
+        transactionId,
+        transactionReference,
+        accountId,
+        accountNumber,
+        amount: amount.toString(),
+        currencyCode,
+        userRole,
+      },
+    },
+    tx,
+  );
+};
+
+export const prepareDeposit = async (
+  user: AuthUser,
+  accountId: string,
+  input: DepositInput,
+  options:DepositServiceOptions = {},
+) => {
+  if (!UUID_REGEX.test(accountId)) {
+    throw new AppError(
+      "Invalid account ID",
+      400,
+      ErrorCode.BAD_REQUEST,
+    );
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const account = await lockDepositAccount(
+      tx,
+      accountId,
+    );
+
+    if (
+      user.role === "CUSTOMER" &&
+      account.user_id !== user.id
+    ) {
+      throw new AppError(
+        "You do not have permission to deposit into this account",
+        403,
+        ErrorCode.FORBIDDEN,
+      );
+    }
+
+    if (
+      user.role !== "CUSTOMER" &&
+      user.role !== "ADMIN"
+    ) {
+      throw new AppError(
+        "You do not have permission to perform a deposit",
+        403,
+        ErrorCode.FORBIDDEN,
+      );
+    }
+
+    if (account.status !== "ACTIVE") {
+      throw new AppError(
+        "Deposits are not allowed for inactive accounts",
+        409,
+        ErrorCode.CONFLICT,
+      );
+    }
+
+    const currency = await tx.currency.findUnique({
+      where: {
+        code: input.currency,
+      },
+      select: {
+        code: true,
+        name: true,
+        symbol: true,
+        decimalPlaces: true,
+        isActive: true,
+      },
+    });
+
+    if (!currency) {
+      throw new AppError(
+        "Currency not found",
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+      );
+    }
+
+    if (!currency.isActive) {
+      throw new AppError(
+        "Currency is inactive",
+        409,
+        ErrorCode.CONFLICT,
+      );
+    }
+
+    const amount = new Prisma.Decimal(
+      input.amount,
+    );
+
+    const transaction =
+      await createDepositTransaction(
+        tx,
+        account.id,
+        amount,
+        currency.code,
+      );
+
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-transaction",
+    );
+
+    const balance    = 
+      await updateDepositBalance(
+        tx,
+        account.id,
+        currency.code,
+        amount,
+      );
+    
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-balance",
+    );
+
+    const ledgerEntry = await createDepositLedgerEntry(
+      tx,
+      transaction.id,
+      account.id,
+      currency.code,
+      amount,
+      balance.balanceBefore,
+      balance.balanceAfter,
+    );
+
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-ledger",
+    );
+
+    const auditLog = await createDepositAuditLog(
+      tx,
+      user.id,
+      user.role,
+      account.id,
+      account.account_number,
+      transaction.id,
+      transaction.reference,
+      amount,
+      currency.code,
+      options.auditContext,
+    );
+
+    simulateDepositFailure(
+      options.failurePoint,
+      "after-audit",
+    );
+
+    await tx.outboxEvent.create({
+      data: {
+        eventType: "NOTIFICATION_REQUESTED",
+        payload: {
+          userId: account.user_id,
+          notificationType: "DEPOSIT_SUCCESS",
+          title: "Deposit successful",
+          message: `Your deposit of ${amount.toString()} ${currency.code} was recorded successfully. Reference: ${transaction.reference}.`,
+          metadata: {
+            transactionId: transaction.id,
+            transactionReference: transaction.reference,
+            accountId: account.id,
+            amount: amount.toString(),
+            currencyCode: currency.code,
+          },
+        },
+      },
+    });
+
+     return {
+      account: {
+        id: account.id,
+        userId: account.user_id,
+        accountNumber: account.account_number,
+        accountType: account.account_type,
+        status: account.status,
+      },
+      currency,
+      amount,
+
+      balance: {
+        id: balance.id,
+        currencyCode: balance.currencyCode,
+        balanceBefore: balance.balanceBefore.toString(),
+        balanceAfter: balance.balanceAfter.toString(),
+        lockedBalance: balance.lockedBalance.toString(),
+      },
+
+      ledgerEntry: {
+        id: ledgerEntry.id,
+        transactionId: ledgerEntry.transactionId,
+        accountId: ledgerEntry.accountId,
+        currencyCode: ledgerEntry.currencyCode,
+        entryType: ledgerEntry.entryType,
+        amount: ledgerEntry.amount.toString(),
+        balanceBefore: ledgerEntry.balanceBefore.toString(),
+        balanceAfter: ledgerEntry.balanceAfter.toString(),
+        createdAt: ledgerEntry.createdAt,
+      },
+
+      transaction: {
+        id: transaction.id,
+        reference: transaction.reference,
+        type: transaction.type,
+        status: transaction.status,
+        amount: transaction.amount.toString(),
+        currencyCode: transaction.currencyCode,
+        provider: transaction.provider,
+        destinationAccountId: transaction.destinationAccountId,
+      },
+    };
+  });
+};

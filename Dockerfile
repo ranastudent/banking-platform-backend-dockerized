@@ -2,7 +2,7 @@
 
 # Prisma 7 reads DATABASE_URL through prisma.config.ts even during generation.
 # This build-only URL is never used at runtime.
-FROM node:22-bookworm-slim As base
+FROM node:22-bookworm-slim AS base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssl \

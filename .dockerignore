@@ -1,4 +1,4 @@
-# Dependencies and generated output
+﻿# Dependencies and generated output
 node_modules
 dist
 coverage
@@ -11,12 +11,13 @@ coverage
 .vscode
 .idea
 
-# Secrets and local environment files (keep only the safe template)
+# All environment files and secrets
 .env
 .env.*
-!.env.example
-!.env.docker.example
+.env*
 .neon
+secrets/
+.secrets/
 
 # Logs, local caches, and OS files
 *.log
@@ -26,3 +27,8 @@ Thumbs.db
 
 # Local test artifacts
 *.test-results
+
+# Local archives and backup files
+*.zip
+*.orig
+skills-lock.json

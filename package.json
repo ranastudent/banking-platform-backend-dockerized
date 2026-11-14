@@ -13,12 +13,13 @@
     "worker:dev": "tsx src/jobs/worker.ts",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
-    "test": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs run",
-    "test:run": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs run",
-    "test:watch": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs",
+    "test": "vitest run",
+    "test:run": "vitest run",
+    "test:watch": "vitest",
     "load:smoke": "k6 run performance/k6/smoke.js",
     "load:read-only": "k6 run performance/k6/read-only.js",
-    "test:prepare": "tsx src/tests/docker/prepare-test-database.ts"
+    "test:prepare": "tsx src/tests/docker/prepare-test-database.ts",
+    "test:docker": "docker compose --profile test run --build --rm test-runner"
   },
   "keywords": [
     "banking",

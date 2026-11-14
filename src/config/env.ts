@@ -45,38 +45,65 @@ const getUrlHost = (value: string, name: string): string => {
   }
 };
 
+const parseUrl = (value: string, name: string): URL => {
+  try {
+    return new URL(value);
+  } catch {
+    throw new Error(`Invalid URL in environment variable: ${name}`);
+  }
+};
+
+if (process.env.DOCKERIZED?.trim().toLowerCase() === "true" && nodeEnv === "development") {
+  const database = parseUrl(databaseUrl, "DATABASE_URL");
+  const redis = parseUrl(redisUrl, "REDIS_URL");
+
+  if (
+    database.hostname !== "postgres" ||
+    !["postgres:", "postgresql:"].includes(database.protocol) ||
+    redis.hostname !== "redis" ||
+    !["redis:", "rediss:"].includes(redis.protocol)
+  ) {
+    throw new Error("Docker development safety check failed: use the Compose postgres and redis services.");
+  }
+}
+
 if (nodeEnv === "test") {
   const expectedDatabaseHost = process.env.TEST_DATABASE_HOST!.trim().toLowerCase();
   const expectedRedisHost = process.env.TEST_REDIS_HOST!.trim().toLowerCase();
   const productionDatabaseHost = process.env.PRODUCTION_DATABASE_HOST!.trim().toLowerCase();
   const productionRedisHost = process.env.PRODUCTION_REDIS_HOST!.trim().toLowerCase();
+  const expectedDatabaseName = process.env.TEST_DATABASE_NAME!.trim();
 
-  if (!expectedDatabaseHost || !expectedRedisHost) {
-    throw new Error("Test environment requires explicit TEST_DATABASE_HOST and TEST_REDIS_HOST values");
+  if (!expectedDatabaseHost || !expectedRedisHost || !productionDatabaseHost ||
+      !productionRedisHost || !expectedDatabaseName) {
+    throw new Error("Test environment requires explicit test and production host allowlists and TEST_DATABASE_NAME");
   }
 
-  if (
-    getUrlHost(databaseUrl, "DATABASE_URL") !== expectedDatabaseHost ||
-    getUrlHost(redisUrl, "REDIS_URL") !== expectedRedisHost
-  ) {
-    throw new Error("Test environment safety check failed: DATABASE_URL or REDIS_URL does not match the explicitly approved test hosts");
+  const configuredDatabaseUrl = parseUrl(databaseUrl, "DATABASE_URL");
+  const configuredRedisUrl = parseUrl(redisUrl, "REDIS_URL");
+  const configuredDatabaseHost = configuredDatabaseUrl.hostname.toLowerCase();
+  const configuredRedisHost = configuredRedisUrl.hostname.toLowerCase();
+
+  if (configuredDatabaseHost !== expectedDatabaseHost || configuredRedisHost !== expectedRedisHost) {
+    throw new Error("Test environment safety check failed: DATABASE_URL and REDIS_URL must match TEST_DATABASE_HOST and TEST_REDIS_HOST");
   }
 
-  if (
-    expectedDatabaseHost === productionDatabaseHost ||
-    expectedRedisHost === productionRedisHost
-  ) {
-    throw new Error("Test environment safety check failed: test and production hosts must be different");
+  if (configuredDatabaseHost === productionDatabaseHost || configuredRedisHost === productionRedisHost) {
+    throw new Error("Test environment safety check failed: test infrastructure must not use production hosts");
   }
 
-  const configuredDatabaseName = decodeURIComponent(
-    new URL(databaseUrl).pathname.replace(/^\//, ""),
-  );
+  const configuredDatabaseName = decodeURIComponent(configuredDatabaseUrl.pathname.replace(/^\//, ""));
+  if (configuredDatabaseName !== expectedDatabaseName) {
+    throw new Error("Test environment safety check failed: DATABASE_URL database name does not match TEST_DATABASE_NAME");
+  }
 
-  if (!configuredDatabaseName || configuredDatabaseName !== process.env.TEST_DATABASE_NAME!.trim()) {
-    throw new Error(
-      "Test environment safety check failed: DATABASE_URL database name does not match TEST_DATABASE_NAME.",
-    );
+  if (!["postgres:", "postgresql:"].includes(configuredDatabaseUrl.protocol) ||
+      !["redis:", "rediss:"].includes(configuredRedisUrl.protocol)) {
+    throw new Error("Test environment safety check failed: unsupported database or Redis URL protocol");
+  }
+
+  if (expectedDatabaseHost !== "test-postgres" || expectedRedisHost !== "test-redis") {
+    throw new Error("Test environment safety check failed: Docker tests must use test-postgres and test-redis services");
   }
 }
 

@@ -9,16 +9,12 @@ process.env.NODE_ENV = "test";
 
 const testEnvPath = resolve(process.cwd(), ".env.test");
 
-if (!existsSync(testEnvPath)) {
-  throw new Error(
-    `Missing ${testEnvPath}. Copy src/.env.test.example to the backend project root as .env.test, then configure dedicated test-only services.`,
-  );
-}
-
-const envResult = loadEnv({ path: testEnvPath });
-
-if (envResult.error) {
-  throw envResult.error;
+// Host runs load .env.test. Docker Compose injects the same variables via env_file.
+if (existsSync(testEnvPath)) {
+  const envResult = loadEnv({ path: testEnvPath });
+  if (envResult.error) throw envResult.error;
+} else if (!process.env.DATABASE_URL || !process.env.REDIS_URL) {
+  throw new Error("Provide .env.test locally or inject DATABASE_URL and REDIS_URL through Docker Compose.");
 }
 
 export default defineConfig({

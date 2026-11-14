@@ -18,8 +18,10 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN npm ci
-COPY tsconfig.json ./
+COPY tsconfig.json vitest.config.ts ./
 COPY src ./src
+# Tests import the application, which loads docs/openapi.json through swagger.ts.
+COPY docs ./docs
 RUN npm run build
 
 # Install only runtime dependencies in a clean layer.

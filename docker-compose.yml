@@ -43,9 +43,11 @@ services:
     image: postgres:17-bookworm
     profiles: ["test"]
     container_name: banking-test-postgres
+    env_file:
+      - .env.test
     environment:
       POSTGRES_USER: banking_test
-      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in local .env}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in .env.docker}
       POSTGRES_DB: banking_test
     ports:
       - "127.0.0.1:5434:5432"
@@ -100,6 +102,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    image: banking-platform-backend-test-runner:local
+    profiles: ["test"]
+    container_name: banking-test-runner
+    env_file:
+      - .env.test
+    environment:
+      NODE_ENV: test
+      TEST_DATABASE_HOST: test-postgres
+      TEST_REDIS_HOST: test-redis
+      SMTP_HOST: mailpit
+    command: ["sh", "-c", "npx prisma migrate deploy && npm run test:run"]
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     restart: "no"
 
   backend:

@@ -18,6 +18,14 @@ import { validate } from "../../middleware/validate";
 import { authRateLimiter, otpRateLimiter } from "../../middleware/rateLimiter";
 import { authenticate } from "../../middleware/authenticate";
 import { getMe } from "../controllers/me.controller";
+import {
+  forgotPasswordController,
+  resetPasswordController,
+} from "../controllers/password-reset.controller";
+import {
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from "../schemas/password-reset.schema";
 
 const router = Router();
 
@@ -34,6 +42,22 @@ router.post(
   authRateLimiter,
   validate({ body: loginSchema }),
   login,
+);
+
+router.post(
+  "/forgot-password",
+  authRateLimiter,
+  otpRateLimiter,
+  validate({ body: forgotPasswordSchema }),
+  forgotPasswordController,
+);
+
+router.post(
+  "/reset-password",
+  authRateLimiter,
+  otpRateLimiter,
+  validate({ body: resetPasswordSchema }),
+  resetPasswordController,
 );
 
 router.post(

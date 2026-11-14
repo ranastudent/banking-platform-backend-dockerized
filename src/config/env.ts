@@ -37,14 +37,6 @@ for (const key of requiredEnv) {
 const databaseUrl = process.env.DATABASE_URL!.trim();
 const redisUrl = process.env.REDIS_URL!.trim();
 
-const getUrlHost = (value: string, name: string): string => {
-  try {
-    return new URL(value).hostname.toLowerCase();
-  } catch {
-    throw new Error(`Invalid URL in environment variable: ${name}`);
-  }
-};
-
 const parseUrl = (value: string, name: string): URL => {
   try {
     return new URL(value);
@@ -74,9 +66,16 @@ if (nodeEnv === "test") {
   const productionRedisHost = process.env.PRODUCTION_REDIS_HOST!.trim().toLowerCase();
   const expectedDatabaseName = process.env.TEST_DATABASE_NAME!.trim();
 
-  if (!expectedDatabaseHost || !expectedRedisHost || !productionDatabaseHost ||
-      !productionRedisHost || !expectedDatabaseName) {
-    throw new Error("Test environment requires explicit test and production host allowlists and TEST_DATABASE_NAME");
+  if (
+    !expectedDatabaseHost ||
+    !expectedRedisHost ||
+    !productionDatabaseHost ||
+    !productionRedisHost ||
+    !expectedDatabaseName
+  ) {
+    throw new Error(
+      "Test environment requires explicit test and production hosts and TEST_DATABASE_NAME",
+    );
   }
 
   const configuredDatabaseUrl = parseUrl(databaseUrl, "DATABASE_URL");
@@ -84,26 +83,61 @@ if (nodeEnv === "test") {
   const configuredDatabaseHost = configuredDatabaseUrl.hostname.toLowerCase();
   const configuredRedisHost = configuredRedisUrl.hostname.toLowerCase();
 
-  if (configuredDatabaseHost !== expectedDatabaseHost || configuredRedisHost !== expectedRedisHost) {
-    throw new Error("Test environment safety check failed: DATABASE_URL and REDIS_URL must match TEST_DATABASE_HOST and TEST_REDIS_HOST");
+  const allowedDatabaseHosts = new Set([
+    "test-postgres",
+    "localhost",
+    "127.0.0.1",
+  ]);
+  const allowedRedisHosts = new Set([
+    "test-redis",
+    "localhost",
+    "127.0.0.1",
+  ]);
+
+  if (
+    !allowedDatabaseHosts.has(expectedDatabaseHost) ||
+    !allowedRedisHosts.has(expectedRedisHost)
+  ) {
+    throw new Error(
+      "Test environment safety check failed: TEST_DATABASE_HOST or TEST_REDIS_HOST is not approved",
+    );
   }
 
-  if (configuredDatabaseHost === productionDatabaseHost || configuredRedisHost === productionRedisHost) {
-    throw new Error("Test environment safety check failed: test infrastructure must not use production hosts");
+  if (
+    configuredDatabaseHost !== expectedDatabaseHost ||
+    configuredRedisHost !== expectedRedisHost
+  ) {
+    throw new Error(
+      "Test environment safety check failed: DATABASE_URL and REDIS_URL must match TEST_DATABASE_HOST and TEST_REDIS_HOST",
+    );
   }
 
-  const configuredDatabaseName = decodeURIComponent(configuredDatabaseUrl.pathname.replace(/^\//, ""));
+  if (
+    expectedDatabaseHost === productionDatabaseHost ||
+    expectedRedisHost === productionRedisHost
+  ) {
+    throw new Error(
+      "Test environment safety check failed: test hosts must differ from production hosts",
+    );
+  }
+
+  const configuredDatabaseName = decodeURIComponent(
+    configuredDatabaseUrl.pathname.replace(/^\//, ""),
+  );
+
   if (configuredDatabaseName !== expectedDatabaseName) {
-    throw new Error("Test environment safety check failed: DATABASE_URL database name does not match TEST_DATABASE_NAME");
+    throw new Error(
+      "Test environment safety check failed: DATABASE_URL database name does not match TEST_DATABASE_NAME",
+    );
   }
 
-  if (!["postgres:", "postgresql:"].includes(configuredDatabaseUrl.protocol) ||
-      !["redis:", "rediss:"].includes(configuredRedisUrl.protocol)) {
-    throw new Error("Test environment safety check failed: unsupported database or Redis URL protocol");
-  }
-
-  if (expectedDatabaseHost !== "test-postgres" || expectedRedisHost !== "test-redis") {
-    throw new Error("Test environment safety check failed: Docker tests must use test-postgres and test-redis services");
+  if (
+    !["postgres:", "postgresql:"].includes(configuredDatabaseUrl.protocol) ||
+    !["redis:", "rediss:"].includes(configuredRedisUrl.protocol)
+  ) {
+    throw new Error(
+      "Test environment safety check failed: unsupported database or Redis URL protocol",
+    );
   }
 }
 
@@ -344,10 +378,6 @@ export const env = {
   },
 
   // ==========================================
-  // RATE LIMITING
-  // ==========================================
-
-     // ==========================================
   // RATE LIMITING
   // ==========================================
 

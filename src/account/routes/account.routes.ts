@@ -3,25 +3,24 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate";
 import { authorize } from "../../middleware/authorize";
 import { validate } from "../../middleware/validate";
-import { requireIdempotencyKey, } from "../../middleware/idempotency.middleware";
+import { requireIdempotencyKey } from "../../middleware/idempotency.middleware";
 
 import {
   createAccount,
+  getAccount,
+  getAccounts,
   updateAccountStatus,
 } from "../controllers/account.controller";
 
+import { processDeposit } from "../../transaction/controllers/deposit.controller";
+import { processWithdrawal } from "../../transaction/controllers/withdrawal.controller";
+
 import {
-  getAccounts,
-  getAccount,
-} from "../controllers/account.controller";
-
-import {  processDeposit } from "../../transaction/controllers/deposit.controller";
-import {processWithdrawal} from "../../transaction/controllers/withdrawal.controller";
-
-import {createAccountSchema,updateAccountStatusSchema,} from "../schemas/account.schema";
+  createAccountSchema,
+  updateAccountStatusSchema,
+} from "../schemas/account.schema";
 
 import { depositSchema } from "../schemas/deposit.schema";
-
 import { withdrawalSchema } from "../schemas/withdrawal.schema";
 
 const router = Router();
@@ -58,17 +57,6 @@ router.patch(
     body: updateAccountStatusSchema,
   }),
   updateAccountStatus,
-);
-
-router.post(
-  "/:accountId/deposits",
-  authenticate,
-  authorize("CUSTOMER", "ADMIN"),
-  validate({
-    body: depositSchema,
-  }),
-  requireIdempotencyKey,
-  processDeposit,
 );
 
 router.post(

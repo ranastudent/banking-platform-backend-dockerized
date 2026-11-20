@@ -28,6 +28,7 @@ model User {
   beneficiaries            Beneficiary[]
   emailVerificationOtps    EmailVerificationOtp[]
   passwordResetTokens      PasswordResetToken[]
+  passwordResetOtps        PasswordResetOtp[]
   reviewedFXRequests       ForeignCurrencyRequest[] @relation("FXRequestReviewer")
   foreignCurrencyRequests  ForeignCurrencyRequest[]
   idempotencyRecords       IdempotencyRecord[]      @relation("UserIdempotencyRecords")
@@ -1217,4 +1218,51 @@ model TransactionDecisionExplanation {
   @@index([phase, createdAt])
   @@index([source, createdAt])
   @@map("transaction_decision_explanations")
+}
+
+
+model PendingRegistration {
+  id           String                    @id @default(uuid()) @db.Uuid
+  name         String
+  email        String                    @unique
+  phone        String?                   @unique
+  passwordHash String                    @map("password_hash")
+  expiresAt    DateTime                  @map("expires_at")
+  createdAt    DateTime                  @default(now()) @map("created_at")
+  updatedAt    DateTime                  @updatedAt @map("updated_at")
+  otps         PendingRegistrationOtp[]
+
+  @@index([expiresAt])
+  @@map("pending_registrations")
+}
+
+model PendingRegistrationOtp {
+  id                    String              @id @default(uuid()) @db.Uuid
+  pendingRegistrationId String              @map("pending_registration_id") @db.Uuid
+  otpHash               String              @map("otp_hash")
+  expiresAt             DateTime            @map("expires_at")
+  attempts              Int                 @default(0)
+  verifiedAt            DateTime?           @map("verified_at")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  pendingRegistration   PendingRegistration @relation(fields: [pendingRegistrationId], references: [id], onDelete: Cascade)
+
+  @@index([pendingRegistrationId, createdAt])
+  @@index([expiresAt])
+  @@map("pending_registration_otps")
+}
+
+model PasswordResetOtp {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  otpHash    String    @map("otp_hash")
+  expiresAt  DateTime  @map("expires_at")
+  attempts   Int       @default(0)
+  verifiedAt DateTime? @map("verified_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consumedAt, createdAt])
+  @@index([expiresAt])
+  @@map("password_reset_otps")
 }

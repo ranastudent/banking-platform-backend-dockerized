@@ -9,7 +9,7 @@ import {
 } from "vitest";
 
 vi.mock("../../auth/services/otp.service", () => ({
-  sendRegistrationOtp: vi.fn(),
+  sendPendingRegistrationOtp: vi.fn(),
 }));
 
 import app from "../../app";
@@ -26,6 +26,10 @@ describe("Authentication - Register", () => {
     if (createdUserEmails.length === 0) {
       return;
     }
+
+    await prisma.pendingRegistration.deleteMany({
+      where: { email: { in: createdUserEmails } },
+    });
 
     const users = await prisma.user.findMany({
       where: {
@@ -100,12 +104,8 @@ describe("Authentication - Register", () => {
     expect(response.body.success).toBe(true);
 
     expect(response.body.data).toMatchObject({
-      name: "Test User",
       email: testEmail,
-      phone: testPhone,
-      role: "CUSTOMER",
-      status: "INACTIVE",
-      emailVerifiedAt: null,
+      status: "PENDING_VERIFICATION",
     });
 
     expect(response.body.data).not.toHaveProperty(
@@ -135,13 +135,9 @@ describe("Authentication - Register", () => {
 
     expect(response.status).toBe(201);
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email,
-      },
-      select: {
-        passwordHash: true,
-      },
+    const user = await prisma.pendingRegistration.findUnique({
+      where: { email },
+      select: { passwordHash: true },
     });
 
     expect(user).not.toBeNull();
@@ -175,13 +171,9 @@ describe("Authentication - Register", () => {
         password: "AnotherPassword123!",
       });
 
-    expect(response.status).toBe(409);
-
-    expect(response.body.success).toBe(false);
-
-    expect(response.body.error.code).toBe(
-      "CONFLICT",
-    );
+    expect(response.status).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.status).toBe("PENDING_VERIFICATION");
   });
 
   it("should reject invalid registration data", async () => {
@@ -216,13 +208,9 @@ describe("Authentication - Register", () => {
 
     expect(response.body.data.email).toBe(email);
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email,
-      },
-      select: {
-        email: true,
-      },
+    const user = await prisma.pendingRegistration.findUnique({
+      where: { email },
+      select: { email: true },
     });
 
     expect(user?.email).toBe(email);

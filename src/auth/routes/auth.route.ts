@@ -19,11 +19,13 @@ import { authRateLimiter, otpRateLimiter } from "../../middleware/rateLimiter";
 import { authenticate } from "../../middleware/authenticate";
 import { getMe } from "../controllers/me.controller";
 import {
-  forgotPasswordController,
+  requestPasswordResetOtpController,
+  verifyPasswordResetOtpController,
   resetPasswordController,
 } from "../controllers/password-reset.controller";
 import {
-  forgotPasswordSchema,
+  requestPasswordResetOtpSchema,
+  verifyPasswordResetOtpSchema,
   resetPasswordSchema,
 } from "../schemas/password-reset.schema";
 
@@ -45,17 +47,24 @@ router.post(
 );
 
 router.post(
-  "/forgot-password",
+  "/reset-password/request",
   authRateLimiter,
   otpRateLimiter,
-  validate({ body: forgotPasswordSchema }),
-  forgotPasswordController,
+  validate({ body: requestPasswordResetOtpSchema }),
+  requestPasswordResetOtpController,
+);
+
+router.post(
+  "/reset-password/verify-otp",
+  authRateLimiter,
+  otpRateLimiter,
+  validate({ body: verifyPasswordResetOtpSchema }),
+  verifyPasswordResetOtpController,
 );
 
 router.post(
   "/reset-password",
   authRateLimiter,
-  otpRateLimiter,
   validate({ body: resetPasswordSchema }),
   resetPasswordController,
 );

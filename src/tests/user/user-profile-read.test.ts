@@ -2,11 +2,11 @@ import "../setup";
 import crypto from "node:crypto";
 
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import app from "../../app";
 import { prisma } from "../../config/prisma";
-import * as emailService from "../../auth/services/email.service";
+import { hashPassword } from "../../auth/utils/password";
 
 describe("GET /api/v1/users/me - User Profile Read", () => {
   const userPassword = "StrongPassword123!";
@@ -50,30 +50,16 @@ describe("GET /api/v1/users/me - User Profile Read", () => {
   });
 
   it("should return the authenticated user's profile", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
-
-    try {
-      const email = createTestEmail("users-me");
-
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Profile Test User",
-          email,
-          password: userPassword,
-        });
-
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: { email },
-        data: {
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
+    const email = createTestEmail("users-me");
+    const user = await prisma.user.create({
+      data: {
+        name: "Profile Test User",
+        email,
+        passwordHash: await hashPassword(userPassword),
+        status: "ACTIVE",
+        emailVerifiedAt: new Date(),
+      },
+    });
 
       createdUserIds.push(user.id);
 
@@ -109,9 +95,6 @@ describe("GET /api/v1/users/me - User Profile Read", () => {
       expect(response.body.data).not.toHaveProperty("passwordHash");
 
       expect(response.body.requestId).toEqual(expect.any(String));
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
   });
 
   it("should reject unauthenticated requests", async () => {
@@ -133,30 +116,16 @@ describe("GET /api/v1/users/me - User Profile Read", () => {
   });
 
   it("should reject a refresh token used as an access token", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
-
-    try {
-      const email = createTestEmail("users-refresh-token");
-
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Refresh Token Test User",
-          email,
-          password: userPassword,
-        });
-
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: { email },
-        data: {
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
+    const email = createTestEmail("users-refresh-token");
+    const user = await prisma.user.create({
+      data: {
+        name: "Refresh Token Test User",
+        email,
+        passwordHash: await hashPassword(userPassword),
+        status: "ACTIVE",
+        emailVerifiedAt: new Date(),
+      },
+    });
 
       createdUserIds.push(user.id);
 
@@ -178,8 +147,5 @@ describe("GET /api/v1/users/me - User Profile Read", () => {
       expect(response.status).toBe(401);
       expect(response.body.success).toBe(false);
       expect(response.body.error.code).toBe("UNAUTHORIZED");
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
   });
 });

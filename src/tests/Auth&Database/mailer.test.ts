@@ -5,7 +5,7 @@ const { sendMailMock, createTransportMock } = vi.hoisted(() => {
     messageId: "unit-test-message-id",
   });
 
-  const createTransportMock = vi.fn(() => ({
+  const createTransportMock = vi.fn((_options: Record<string, unknown>) => ({
     sendMail: sendMailMock,
   }));
 
@@ -18,6 +18,7 @@ vi.mock("nodemailer", () => ({
   },
 }));
 
+import { emailConfig } from "../../config/email";
 import { sendEmail } from "../../utils/mailer";
 
 describe("Mailer", () => {
@@ -27,12 +28,25 @@ describe("Mailer", () => {
         host: expect.any(String),
         port: expect.any(Number),
         secure: expect.any(Boolean),
-        auth: {
-          user: expect.any(String),
-          pass: expect.any(String),
-        },
       }),
     );
+
+    const transportOptions = createTransportMock.mock.calls[0]?.[0];
+    const isLocalMailpit = [
+      "mailpit",
+      "localhost",
+      "127.0.0.1",
+      "::1",
+    ].includes(emailConfig.host.trim().toLowerCase());
+
+    if (isLocalMailpit) {
+      expect(transportOptions).not.toHaveProperty("auth");
+    } else {
+      expect(transportOptions).toHaveProperty("auth", {
+        user: emailConfig.user,
+        pass: emailConfig.password,
+      });
+    }
   });
 
   it("sends an email with the configured sender and supplied content", async () => {

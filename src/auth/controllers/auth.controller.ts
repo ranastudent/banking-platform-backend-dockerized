@@ -11,11 +11,7 @@ export const register = async (
   try {
     const input = req.body as RegisterInput;
 
-    const user = await registerUser(input, {
-      requestId: req.requestId,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? undefined,
-    });
+    const user = await registerUser(input);
 
     sendSuccess(
       res,

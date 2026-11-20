@@ -30,6 +30,8 @@ describe("Authentication Integration", () => {
   afterEach(async () => {
   vi.restoreAllMocks();
 
+  await prisma.pendingRegistration.deleteMany({ where: { email } });
+
   const user = await prisma.user.findUnique({
     where: {
       email,
@@ -109,36 +111,27 @@ describe("Authentication Integration", () => {
     // ----------------------------------------------------------
 
     const registeredUser = await prisma.user.findUnique({
-      where: {
-        email,
-      },
+      where: { email },
     });
+    expect(registeredUser).toBeNull();
 
-    expect(registeredUser).not.toBeNull();
-
-    expect(registeredUser?.email).toBe(email);
-    expect(registeredUser?.status).toBe("INACTIVE");
-    expect(registeredUser?.emailVerifiedAt).toBeNull();
-
-    // Password must be hashed.
-    expect(registeredUser?.passwordHash).toBeDefined();
-    expect(registeredUser?.passwordHash).not.toBe(password);
+    const pendingRegistration = await prisma.pendingRegistration.findUnique({
+      where: { email },
+    });
+    expect(pendingRegistration).not.toBeNull();
+    expect(pendingRegistration?.passwordHash).toBeDefined();
+    expect(pendingRegistration?.passwordHash).not.toBe(password);
 
     // ----------------------------------------------------------
-    // STEP 4: Check OTP record
+    // STEP 4: Check pending registration OTP record
     // ----------------------------------------------------------
 
-    const otpRecord = await prisma.emailVerificationOtp.findFirst({
-      where: {
-        userId: registeredUser!.id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+    const otpRecord = await prisma.pendingRegistrationOtp.findFirst({
+      where: { pendingRegistrationId: pendingRegistration!.id },
+      orderBy: { createdAt: "desc" },
     });
 
     expect(otpRecord).not.toBeNull();
-
     expect(otpRecord?.otpHash).toBeDefined();
     expect(otpRecord?.otpHash).not.toBe(registrationOtp);
     expect(otpRecord?.verifiedAt).toBeNull();
@@ -172,15 +165,16 @@ describe("Authentication Integration", () => {
     expect(verifiedUser?.status).toBe("ACTIVE");
     expect(verifiedUser?.emailVerifiedAt).not.toBeNull();
 
-    const verifiedOtpRecord =
-      await prisma.emailVerificationOtp.findUnique({
-        where: {
-          id: otpRecord!.id,
-        },
-      });
+    const remainingPending = await prisma.pendingRegistration.findUnique({
+      where: { email },
+    });
+    expect(remainingPending).toBeNull();
 
-    expect(verifiedOtpRecord).not.toBeNull();
-    expect(verifiedOtpRecord?.verifiedAt).not.toBeNull();
+    const verifiedOtpRecord =
+      await prisma.pendingRegistrationOtp.findUnique({
+        where: { id: otpRecord!.id },
+      });
+    expect(verifiedOtpRecord).toBeNull();
 
     // ----------------------------------------------------------
     // STEP 7: Login

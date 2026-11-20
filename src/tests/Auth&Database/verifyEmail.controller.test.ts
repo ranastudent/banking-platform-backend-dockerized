@@ -29,6 +29,7 @@ describe("Verify Email Controller", () => {
         otp: "123456",
       });
 
+    // Response assertions
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
 
@@ -44,11 +45,18 @@ describe("Verify Email Controller", () => {
     expect(response.body.data.emailVerifiedAt).not.toBeNull();
     expect(response.body.requestId).toBeDefined();
 
+    // Service call assertions
     expect(verifyEmail).toHaveBeenCalledTimes(1);
 
-    expect(verifyEmail).toHaveBeenCalledWith({
-      email: "verify-controller@example.com",
-      otp: "123456",
-    });
+    expect(verifyEmail).toHaveBeenCalledWith(
+      {
+        email: "verify-controller@example.com",
+        otp: "123456",
+      },
+      expect.objectContaining({
+        ipAddress: expect.any(String),
+        requestId: expect.any(String),
+      }),
+    );
   });
 });

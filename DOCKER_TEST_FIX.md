@@ -6,7 +6,8 @@ The test-runner image builds from the Dockerfile `build` stage. That stage copie
 ## Changes
 - Dockerfile: copy `docs/` into the `build` stage before compiling/running tests.
 - docker-compose.yml: explicitly pass `TEST_POSTGRES_PASSWORD` as `POSTGRES_PASSWORD` to the isolated `test-postgres` service on first initialization.
-- No application business logic, password-reset endpoint behavior, or production database configuration was changed.
+- The Docker test-runner fix does not modify application business logic or password-reset endpoint behavior.
+- Production database configuration remains unchanged.
 
 ## Run
 From the backend directory:

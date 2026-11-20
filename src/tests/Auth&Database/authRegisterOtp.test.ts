@@ -1,65 +1,48 @@
 import "../setup";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-
-vi.mock("../../auth/services/otp.service", () => ({
-  sendRegistrationOtp: vi.fn(),
-}));
 
 import app from "../../app";
 import { prisma } from "../../config/prisma";
-import { sendRegistrationOtp } from "../../auth/services/otp.service";
+import * as emailService from "../../auth/services/email.service";
 
 describe("Authentication - Registration OTP Integration", () => {
-  let createdUserId: string | null = null;
+  const createdEmails: string[] = [];
+  let registrationOtp = "";
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    createdUserId = null;
+    registrationOtp = "";
+    vi.spyOn(emailService, "sendRegistrationOtpEmail")
+      .mockImplementation(async (_email, otp) => {
+        registrationOtp = otp;
+      });
   });
 
   afterEach(async () => {
-    if (!createdUserId) {
-      return;
-    }
+    vi.restoreAllMocks();
+    if (createdEmails.length === 0) return;
 
-    await prisma.refreshToken.deleteMany({
-    where: {
-      userId: createdUserId!,
-    },
+    const emails = [...createdEmails];
+    createdEmails.length = 0;
+    const users = await prisma.user.findMany({
+      where: { email: { in: emails } },
+      select: { id: true },
     });
+    const userIds = users.map((user) => user.id);
 
-  await prisma.emailVerificationOtp.deleteMany({
-    where: {
-      userId: createdUserId!,
-    },
+    await prisma.pendingRegistration.deleteMany({
+      where: { email: { in: emails } },
+    });
+    if (userIds.length) {
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    }
   });
 
-  await prisma.auditLog.deleteMany({
-    where: {
-      userId: createdUserId!,
-    },
-  });
-
-  await prisma.user.delete({
-    where: {
-      id: createdUserId!,
-    },
-  });
-
-    createdUserId = null;
-  });
-
-  it("should create an inactive user and send a registration OTP", async () => {
-    const email =
-      `otp-register-${Date.now()}-${Math.random()}@example.com`;
+  it("must not create a User until the correct registration OTP is verified", async () => {
+    const email = `otp-register-${Date.now()}-${Math.random()}@example.com`;
+    createdEmails.push(email);
 
     const response = await request(app)
       .post("/api/v1/auth/register")
@@ -70,40 +53,47 @@ describe("Authentication - Registration OTP Integration", () => {
       });
 
     expect(response.status).toBe(201);
-
-    expect(response.body.success).toBe(true);
-
     expect(response.body.data).toMatchObject({
       email,
-      status: "INACTIVE",
-      emailVerifiedAt: null,
+      status: "PENDING_VERIFICATION",
     });
+    expect(response.body.data).not.toHaveProperty("id");
+    expect(registrationOtp).toMatch(/^\d{6}$/);
 
-    createdUserId = response.body.data.id;
+    const pending = await prisma.pendingRegistration.findUnique({
+      where: { email },
+    });
+    expect(pending).not.toBeNull();
+    expect(pending?.passwordHash).not.toBe("StrongPassword123!");
 
-    expect(createdUserId).toBeTruthy();
+    const userBeforeOtp = await prisma.user.findUnique({ where: { email } });
+    expect(userBeforeOtp).toBeNull();
 
-    expect(sendRegistrationOtp).toHaveBeenCalledTimes(1);
+    const invalidResponse = await request(app)
+      .post("/api/v1/auth/verify-email")
+      .send({ email, otp: "000000" });
+    expect(invalidResponse.status).toBe(400);
 
-    expect(sendRegistrationOtp).toHaveBeenCalledWith(
-      createdUserId,
+    const userAfterInvalidOtp = await prisma.user.findUnique({ where: { email } });
+    expect(userAfterInvalidOtp).toBeNull();
+
+    const validResponse = await request(app)
+      .post("/api/v1/auth/verify-email")
+      .send({ email, otp: registrationOtp });
+    expect(validResponse.status).toBe(200);
+    expect(validResponse.body.success).toBe(true);
+    expect(validResponse.body.data).toMatchObject({
       email,
-    );
-
-    const user = await prisma.user.findUnique({
-      where: {
-        id: createdUserId!,
-      },
-      select: {
-        status: true,
-        emailVerifiedAt: true,
-      },
+      status: "ACTIVE",
     });
 
-    expect(user).not.toBeNull();
+    const createdUser = await prisma.user.findUnique({ where: { email } });
+    expect(createdUser).not.toBeNull();
+    expect(createdUser?.emailVerifiedAt).not.toBeNull();
 
-    expect(user?.status).toBe("INACTIVE");
-
-    expect(user?.emailVerifiedAt).toBeNull();
+    const pendingAfterVerification = await prisma.pendingRegistration.findUnique({
+      where: { email },
+    });
+    expect(pendingAfterVerification).toBeNull();
   });
 });

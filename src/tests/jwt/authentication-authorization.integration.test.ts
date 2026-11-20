@@ -1,379 +1,157 @@
 import "../setup";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
 
 import app from "../../app";
 import { prisma } from "../../config/prisma";
-import * as emailService from "../../auth/services/email.service";
+import { hashPassword } from "../../auth/utils/password";
 
 describe("Authentication + Authorization Full Integration", () => {
   const userPassword = "StrongPassword123!";
-
   const createdUserIds: string[] = [];
 
   const createTestEmail = (label: string) =>
     `${label}.${crypto.randomUUID()}@example.com`;
 
-  afterEach(async () => {
-    if (createdUserIds.length === 0) {
-      return;
-    }
+  const createActiveUser = async (email: string, name: string, role: "ADMIN" | "CUSTOMER" = "CUSTOMER") => {
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        passwordHash: await hashPassword(userPassword),
+        role,
+        status: "ACTIVE",
+        emailVerifiedAt: new Date(),
+      },
+    });
+    createdUserIds.push(user.id);
+    return user;
+  };
 
+  afterEach(async () => {
+    if (createdUserIds.length === 0) return;
     const userIds = [...createdUserIds];
     createdUserIds.length = 0;
 
-    await prisma.refreshToken.deleteMany({
-      where: {
-        userId: {
-          in: userIds,
-        },
-      },
-    });
-
-    await prisma.emailVerificationOtp.deleteMany({
-      where: {
-        userId: {
-          in: userIds,
-        },
-      },
-    });
-
-    await prisma.user.deleteMany({
-      where: {
-        id: {
-          in: userIds,
-        },
-      },
-    });
+    await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.emailVerificationOtp.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.passwordResetOtp.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.passwordResetToken.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   });
 
   it("should allow a real ADMIN user to login and access the ADMIN route", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
+    const email = createTestEmail("admin.integration");
+    const user = await createActiveUser(email, "Admin User", "ADMIN");
 
-    try {
-      const email = createTestEmail("admin.integration");
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email,
+      password: userPassword,
+    });
+    expect(loginResponse.status).toBe(200);
+    expect(loginResponse.body.data.accessToken).toEqual(expect.any(String));
 
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Admin User",
-          email,
-          password: userPassword,
-        });
+    const protectedResponse = await request(app)
+      .get("/api/v1/admin/test")
+      .set("Authorization", `Bearer ${loginResponse.body.data.accessToken}`);
 
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: {
-          email,
-        },
-        data: {
-          role: "ADMIN",
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
-
-      createdUserIds.push(user.id);
-
-      expect(user.role).toBe("ADMIN");
-
-      const loginResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({
-          email,
-          password: userPassword,
-        });
-
-      expect(loginResponse.status).toBe(200);
-      expect(loginResponse.body.data.accessToken).toEqual(
-        expect.any(String),
-      );
-
-      const accessToken =
-        loginResponse.body.data.accessToken;
-
-      const protectedResponse = await request(app)
-        .get("/api/v1/admin/test")
-        .set("Authorization", `Bearer ${accessToken}`);
-
-      expect(protectedResponse.status).toBe(200);
-      expect(protectedResponse.body.success).toBe(true);
-      expect(
-        protectedResponse.body.data.user.role,
-      ).toBe("ADMIN");
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedResponse.body.success).toBe(true);
+    expect(protectedResponse.body.data.user.role).toBe("ADMIN");
+    expect(user.role).toBe("ADMIN");
   });
 
   it("should allow a real CUSTOMER user to login but reject the ADMIN route", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
+    const email = createTestEmail("customer.integration");
+    await createActiveUser(email, "Customer User", "CUSTOMER");
 
-    try {
-      const email = createTestEmail(
-        "customer.integration",
-      );
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email,
+      password: userPassword,
+    });
+    expect(loginResponse.status).toBe(200);
 
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Customer User",
-          email,
-          password: userPassword,
-        });
+    const protectedResponse = await request(app)
+      .get("/api/v1/admin/test")
+      .set("Authorization", `Bearer ${loginResponse.body.data.accessToken}`);
 
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: {
-          email,
-        },
-        data: {
-          role: "CUSTOMER",
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
-
-      createdUserIds.push(user.id);
-
-      const loginResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({
-          email,
-          password: userPassword,
-        });
-
-      expect(loginResponse.status).toBe(200);
-
-      const accessToken =
-        loginResponse.body.data.accessToken;
-
-      const protectedResponse = await request(app)
-        .get("/api/v1/admin/test")
-        .set("Authorization", `Bearer ${accessToken}`);
-
-      expect(protectedResponse.status).toBe(403);
-      expect(protectedResponse.body.success).toBe(false);
-      expect(protectedResponse.body.error.code).toBe(
-        "FORBIDDEN",
-      );
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
+    expect(protectedResponse.status).toBe(403);
+    expect(protectedResponse.body.success).toBe(false);
+    expect(protectedResponse.body.error.code).toBe("FORBIDDEN");
   });
 
   it("should reject access when no authentication is provided", async () => {
-    const response = await request(app).get(
-      "/api/v1/admin/test",
-    );
-
+    const response = await request(app).get("/api/v1/admin/test");
     expect(response.status).toBe(401);
     expect(response.body.success).toBe(false);
     expect(response.body.error.code).toBe("UNAUTHORIZED");
   });
 
   it("should preserve the authenticated user's identity through the full flow", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
+    const email = createTestEmail("identity.admin");
+    const user = await createActiveUser(email, "Identity Admin", "ADMIN");
 
-    try {
-      const email = createTestEmail("identity.admin");
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email: user.email,
+      password: userPassword,
+    });
+    expect(loginResponse.status).toBe(200);
 
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Identity Admin",
-          email,
-          password: userPassword,
-        });
+    const protectedResponse = await request(app)
+      .get("/api/v1/admin/test")
+      .set("Authorization", `Bearer ${loginResponse.body.data.accessToken}`);
 
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: {
-          email,
-        },
-        data: {
-          role: "ADMIN",
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
-
-      createdUserIds.push(user.id);
-
-      const loginResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({
-          email: user.email,
-          password: userPassword,
-        });
-
-      expect(loginResponse.status).toBe(200);
-
-      const accessToken =
-        loginResponse.body.data.accessToken;
-
-      const protectedResponse = await request(app)
-        .get("/api/v1/admin/test")
-        .set("Authorization", `Bearer ${accessToken}`);
-
-      expect(protectedResponse.status).toBe(200);
-
-      expect(
-        protectedResponse.body.data.user,
-      ).toEqual({
-        id: user.id,
-        email: user.email,
-        role: "ADMIN",
-        status: "ACTIVE",
-      });
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedResponse.body.data.user).toEqual({
+      id: user.id,
+      email: user.email,
+      role: "ADMIN",
+      status: "ACTIVE",
+    });
   });
 
   it("should not allow client-supplied identity to override JWT identity", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
+    const email = createTestEmail("identity-protection");
+    const user = await createActiveUser(email, "Identity Protection User", "ADMIN");
 
-    try {
-      const email = createTestEmail(
-        "identity-protection",
-      );
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email: user.email,
+      password: userPassword,
+    });
+    expect(loginResponse.status).toBe(200);
 
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Identity Protection User",
-          email,
-          password: userPassword,
-        });
+    const attackerId = crypto.randomUUID();
+    const protectedResponse = await request(app)
+      .get("/api/v1/admin/test")
+      .set("Authorization", `Bearer ${loginResponse.body.data.accessToken}`)
+      .query({ userId: attackerId, role: "CUSTOMER" });
 
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: {
-          email,
-        },
-        data: {
-          role: "ADMIN",
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
-
-      createdUserIds.push(user.id);
-
-      const loginResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({
-          email: user.email,
-          password: userPassword,
-        });
-
-      expect(loginResponse.status).toBe(200);
-
-      const accessToken =
-        loginResponse.body.data.accessToken;
-
-      const attackerId = crypto.randomUUID();
-
-      const protectedResponse = await request(app)
-        .get("/api/v1/admin/test")
-        .set("Authorization", `Bearer ${accessToken}`)
-        .query({
-          userId: attackerId,
-          role: "CUSTOMER",
-        });
-
-      expect(protectedResponse.status).toBe(200);
-
-      expect(
-        protectedResponse.body.data.user,
-      ).toEqual({
-        id: user.id,
-        email: user.email,
-        role: "ADMIN",
-        status: "ACTIVE",
-      });
-
-      expect(
-        protectedResponse.body.data.user.id,
-      ).not.toBe(attackerId);
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedResponse.body.data.user).toEqual({
+      id: user.id,
+      email: user.email,
+      role: "ADMIN",
+      status: "ACTIVE",
+    });
+    expect(protectedResponse.body.data.user.id).not.toBe(attackerId);
   });
 
   it("should include requestId throughout the full authentication and authorization flow", async () => {
-    const sendOtpSpy = vi
-      .spyOn(emailService, "sendRegistrationOtpEmail")
-      .mockResolvedValue(undefined);
+    const email = createTestEmail("requestid.admin");
+    const user = await createActiveUser(email, "Request ID Admin", "ADMIN");
 
-    try {
-      const email = createTestEmail(
-        "requestid.admin",
-      );
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email: user.email,
+      password: userPassword,
+    });
+    expect(loginResponse.status).toBe(200);
 
-      const registerResponse = await request(app)
-        .post("/api/v1/auth/register")
-        .send({
-          name: "Request ID Admin",
-          email,
-          password: userPassword,
-        });
+    const protectedResponse = await request(app)
+      .get("/api/v1/admin/test")
+      .set("Authorization", `Bearer ${loginResponse.body.data.accessToken}`);
 
-      expect(registerResponse.status).toBe(201);
-
-      const user = await prisma.user.update({
-        where: {
-          email,
-        },
-        data: {
-          role: "ADMIN",
-          status: "ACTIVE",
-          emailVerifiedAt: new Date(),
-        },
-      });
-
-      createdUserIds.push(user.id);
-
-      const loginResponse = await request(app)
-        .post("/api/v1/auth/login")
-        .send({
-          email: user.email,
-          password: userPassword,
-        });
-
-      expect(loginResponse.status).toBe(200);
-
-      const accessToken =
-        loginResponse.body.data.accessToken;
-
-      const protectedResponse = await request(app)
-        .get("/api/v1/admin/test")
-        .set("Authorization", `Bearer ${accessToken}`);
-
-      expect(protectedResponse.status).toBe(200);
-      expect(protectedResponse.body).toHaveProperty(
-        "requestId",
-      );
-
-      expect(
-        protectedResponse.body.requestId,
-      ).toEqual(expect.any(String));
-    } finally {
-      sendOtpSpy.mockRestore();
-    }
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedResponse.body.requestId).toEqual(expect.any(String));
   });
 });

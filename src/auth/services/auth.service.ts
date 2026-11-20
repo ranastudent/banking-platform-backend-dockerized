@@ -1,83 +1,90 @@
 import { prisma } from "../../config/prisma";
-import { writeAuditLog } from "../../audit/audit.service";
-import type { AuditContext } from "../../audit/audit.types";
 import { cacheGroups, cacheService } from "../../services/cache.service";
 import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { RegisterInput } from "../schemas/auth.schema";
 import { hashPassword } from "../utils/password";
-import { sendRegistrationOtp } from "./otp.service";
+import { sendPendingRegistrationOtp } from "./otp.service";
 
-export const registerUser = async (
-  input: RegisterInput,
-  auditContext: AuditContext = {},
-) => {
+const PENDING_REGISTRATION_TTL_MS = 30 * 60 * 1000;
+
+const isUniqueConstraintError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: unknown }).code === "P2002";
+
+export const registerUser = async (input: RegisterInput) => {
   const email = input.email.trim().toLowerCase();
+  const phone = input.phone?.trim() || null;
 
-  const existingUser = await prisma.user.findUnique({
-    where: {
-      email,
-    },
-    select: {
-      id: true,
-    },
+  await prisma.pendingRegistration.deleteMany({
+    where: { expiresAt: { lte: new Date() } },
   });
 
+  const [existingUser, existingPhoneUser] = await Promise.all([
+    prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    }),
+    phone
+      ? prisma.user.findUnique({
+          where: { phone },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
   if (existingUser) {
-    throw new AppError(
-      "Email is already registered",
-      409,
-      ErrorCode.CONFLICT,
-    );
+    throw new AppError("Email is already registered", 409, ErrorCode.CONFLICT);
+  }
+
+  if (existingPhoneUser) {
+    throw new AppError("Phone number is already registered", 409, ErrorCode.CONFLICT);
   }
 
   const passwordHash = await hashPassword(input.password);
+  const expiresAt = new Date(Date.now() + PENDING_REGISTRATION_TTL_MS);
 
-  const user = await prisma.$transaction(async (tx) => {
-    const createdUser = await tx.user.create({
-      data: {
-        name: input.name.trim(),
-        email,
-        phone: input.phone?.trim() || null,
-        passwordHash,
-        status: "INACTIVE",
-        emailVerifiedAt: null,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        emailVerifiedAt: true,
-        createdAt: true,
-      },
-    });
+  let pendingRegistration: { id: string; email: string; expiresAt: Date };
+  try {
+    pendingRegistration = await prisma.$transaction(async (tx) => {
+      // A new registration attempt for the same unverified email rotates the
+      // pending data and OTP. Verified users are never modified here.
+      await tx.pendingRegistration.deleteMany({ where: { email } });
 
-    await writeAuditLog(
-      {
-        userId: createdUser.id,
-        action: "USER_REGISTERED",
-        resource: "USER",
-        resourceId: createdUser.id,
-        description: "User registered.",
-        ...auditContext,
-        metadata: {
-          role: createdUser.role,
-          status: createdUser.status,
+      return tx.pendingRegistration.create({
+        data: {
+          name: input.name.trim(),
+          email,
+          phone,
+          passwordHash,
+          expiresAt,
         },
-      },
-      tx,
-    );
+        select: {
+          id: true,
+          email: true,
+          expiresAt: true,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new AppError(
+        "Email or phone number is already registered or pending verification",
+        409,
+        ErrorCode.CONFLICT,
+      );
+    }
+    throw error;
+  }
 
-    return createdUser;
-  });
+  await sendPendingRegistrationOtp(pendingRegistration.id, email);
 
-  // Registration changes the total and ordering of the admin user list.
-  await cacheService.invalidateGroup(cacheGroups.adminUsers);
-
-  await sendRegistrationOtp(user.id, user.email);
-
-  return user;
+  return {
+    email: pendingRegistration.email,
+    status: "PENDING_VERIFICATION" as const,
+    expiresAt: pendingRegistration.expiresAt,
+    message: "Registration OTP sent. Verify your email to complete registration.",
+  };
 };

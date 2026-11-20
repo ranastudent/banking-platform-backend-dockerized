@@ -11,7 +11,11 @@ export const verifyEmailController = async (
   try {
     const input = req.body as VerifyEmailInput;
 
-    const user = await verifyEmail(input);
+    const user = await verifyEmail(input, {
+      requestId: req.requestId,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    });
 
     sendSuccess(
       res,

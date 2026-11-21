@@ -1,13 +1,13 @@
 name: banking-platform
 
 services:
-
+  # Development PostgreSQL.
   postgres:
     image: postgres:17-bookworm
     container_name: banking-postgres
     environment:
       POSTGRES_USER: banking_app
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in local .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
       POSTGRES_DB: banking_dev
     ports:
       - "127.0.0.1:5433:5432"
@@ -21,10 +21,14 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # Development Redis. Port 6381 is exposed only to the Windows host;
+  # containers should connect to redis:6379.
   redis:
     image: redis:7.4-bookworm
     container_name: banking-redis
     command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6381:6379"
     volumes:
       - banking_redis_data:/data
     healthcheck:
@@ -35,10 +39,8 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-
-  # Isolated services for Vitest integration tests. They are opt-in and are
-  # never started by the normal development stack unless the "test" profile
-  # is explicitly selected.
+  # Isolated services for Vitest integration tests. They are opt-in and
+  # are not started by the normal development stack.
   test-postgres:
     image: postgres:17-bookworm
     profiles: ["test"]
@@ -86,6 +88,7 @@ services:
       - "127.0.0.1:8025:8025"
     restart: unless-stopped
 
+  # Apply migrations before starting the API and worker.
   migrate:
     build:
       context: .
@@ -95,16 +98,30 @@ services:
     container_name: banking-migrate
     env_file:
       - .env.docker
-    command:
-      - npx
-      - prisma
-      - migrate
-      - deploy
+    command: ["npx", "prisma", "migrate", "deploy"]
     depends_on:
       postgres:
         condition: service_healthy
     restart: "no"
 
+  # Explicit one-shot development seed.
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    image: banking-platform-backend-seed:local
+    profiles: ["seed"]
+    env_file:
+      - .env.docker
+    command: ["npx", "prisma", "db", "seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Test runner uses the isolated test services and overrides host-mode
+  # URLs from .env.test with Docker Compose service DNS names.
   test-runner:
     build:
       context: .
@@ -117,8 +134,11 @@ services:
       - .env.test
     environment:
       NODE_ENV: test
+      TEST_DATABASE_NAME: banking_test
       TEST_DATABASE_HOST: test-postgres
       TEST_REDIS_HOST: test-redis
+      DATABASE_URL: "postgresql://banking_test:${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in .env.docker}@test-postgres:5432/banking_test?schema=public"
+      REDIS_URL: "redis://test-redis:6379/1"
       SMTP_HOST: mailpit
     command: ["sh", "-c", "npx prisma migrate deploy && npm run test:run"]
     depends_on:
@@ -131,6 +151,10 @@ services:
     restart: "no"
 
   backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
     image: banking-platform-backend:local
     container_name: banking-backend
     env_file:
@@ -165,9 +189,7 @@ services:
     container_name: banking-worker
     env_file:
       - .env.docker
-    command:
-      - node
-      - dist/jobs/worker.js
+    command: ["node", "dist/jobs/worker.js"]
     depends_on:
       postgres:
         condition: service_healthy

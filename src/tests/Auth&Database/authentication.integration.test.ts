@@ -45,6 +45,31 @@ describe("Authentication Integration", () => {
     return;
   }
 
+  const userAccounts = await prisma.account.findMany({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+  const accountIds = userAccounts.map(({ id }) => id);
+  if (accountIds.length > 0) {
+    const accountTransactions = await prisma.transaction.findMany({
+      where: {
+        OR: [
+          { sourceAccountId: { in: accountIds } },
+          { destinationAccountId: { in: accountIds } },
+        ],
+      },
+      select: { id: true },
+    });
+    const transactionIds = accountTransactions.map(({ id }) => id);
+    if (transactionIds.length > 0) {
+      await prisma.ledgerEntry.deleteMany({ where: { transactionId: { in: transactionIds } } });
+      await prisma.transactionLeg.deleteMany({ where: { transactionId: { in: transactionIds } } });
+      await prisma.transaction.deleteMany({ where: { id: { in: transactionIds } } });
+    }
+    await prisma.accountBalance.deleteMany({ where: { accountId: { in: accountIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+  }
+
   await prisma.refreshToken.deleteMany({
     where: {
       userId: user.id,
@@ -164,6 +189,33 @@ describe("Authentication Integration", () => {
 
     expect(verifiedUser?.status).toBe("ACTIVE");
     expect(verifiedUser?.emailVerifiedAt).not.toBeNull();
+
+    // New verified customers receive exactly one multi-currency demo account.
+    const welcomeAccounts = await prisma.account.findMany({
+      where: { userId: verifiedUser!.id },
+      include: { balances: { orderBy: { currencyCode: "asc" } } },
+    });
+    expect(welcomeAccounts).toHaveLength(1);
+    expect(welcomeAccounts[0]?.balances.map((balance) => ({
+      currencyCode: balance.currencyCode,
+      amount: balance.availableBalance.toString(),
+    }))).toEqual([
+      { currencyCode: "BDT", amount: "100000" },
+      { currencyCode: "EUR", amount: "1000" },
+      { currencyCode: "GBP", amount: "1000" },
+      { currencyCode: "JPY", amount: "2000000" },
+      { currencyCode: "USD", amount: "2000" },
+    ]);
+
+    const welcomeTransactions = await prisma.transaction.findMany({
+      where: { destinationAccountId: welcomeAccounts[0]!.id },
+    });
+    expect(welcomeTransactions).toHaveLength(5);
+    expect(welcomeTransactions.every((item) =>
+      item.status === "COMPLETED" &&
+      item.metadata !== null &&
+      JSON.stringify(item.metadata).includes("VIRTUAL_WELCOME_BONUS")
+    )).toBe(true);
 
     const remainingPending = await prisma.pendingRegistration.findUnique({
       where: { email },

@@ -6,6 +6,7 @@ import { AppError } from "../../errors/AppError";
 import { ErrorCode } from "../../errors/errorCodes";
 import type { VerifyEmailInput } from "../schemas/verifyEmail.schema";
 import { compareOtp } from "../utils/otpHash";
+import { createWelcomeMultiCurrencyAccount } from "./create-welcome-account.service";
 
 const MAX_OTP_ATTEMPTS = 5;
 
@@ -104,6 +105,13 @@ export const verifyEmail = async (input: VerifyEmailInput, auditContext: AuditCo
             createdAt: true,
           },
         });
+
+        // New CUSTOMER registrations receive one multi-currency demo account.
+        // Account, balances, funding transactions, ledger entries and audit
+        // records commit atomically with user creation and OTP consumption.
+        if (user.role === "CUSTOMER") {
+          await createWelcomeMultiCurrencyAccount(tx, user.id, auditContext);
+        }
 
         await writeAuditLog(
           {

@@ -17,6 +17,8 @@ export const ErrorCode = {
   BAD_REQUEST: "BAD_REQUEST",
 
   DATABASE_ERROR: "DATABASE_ERROR",
+  SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+  BAD_GATEWAY: "BAD_GATEWAY",
 } as const;
 
 export type ErrorCode =

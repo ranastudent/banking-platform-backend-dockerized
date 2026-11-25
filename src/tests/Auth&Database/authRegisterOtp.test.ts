@@ -36,6 +36,48 @@ describe("Authentication - Registration OTP Integration", () => {
     if (userIds.length) {
       await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
+
+      // Registration verification creates a default account. Delete dependent
+      // balance rows and accounts before deleting the user.
+      const accounts = await prisma.account.findMany({
+        where: { userId: { in: userIds } },
+        select: { id: true },
+      });
+      const accountIds = accounts.map((account) => account.id);
+      if (accountIds.length > 0) {
+        // Welcome-account creation writes linked transactions, legs, and
+        // ledger entries. Remove these children before deleting the account.
+        const accountTransactions = await prisma.transaction.findMany({
+          where: {
+            OR: [
+              { sourceAccountId: { in: accountIds } },
+              { destinationAccountId: { in: accountIds } },
+            ],
+          },
+          select: { id: true },
+        });
+        const transactionIds = accountTransactions.map(({ id }) => id);
+
+        if (transactionIds.length > 0) {
+          await prisma.ledgerEntry.deleteMany({
+            where: { transactionId: { in: transactionIds } },
+          });
+          await prisma.transactionLeg.deleteMany({
+            where: { transactionId: { in: transactionIds } },
+          });
+          await prisma.transaction.deleteMany({
+            where: { id: { in: transactionIds } },
+          });
+        }
+
+        await prisma.accountBalance.deleteMany({
+          where: { accountId: { in: accountIds } },
+        });
+        await prisma.account.deleteMany({
+          where: { id: { in: accountIds } },
+        });
+      }
+
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     }
   });

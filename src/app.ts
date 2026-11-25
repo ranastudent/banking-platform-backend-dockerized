@@ -15,7 +15,10 @@ import { env } from "./config/env";
 import routes from "./routes";
 import { openApiSpec, swaggerUiMiddleware } from "./docs/swagger";
 import { metricsHandler } from "./observability/metrics";
+import { registerConfiguredDepositAdapters } from "./deposits/providers/register-configured";
 
+
+registerConfiguredDepositAdapters();
 
 const app = express();
 
@@ -41,7 +44,13 @@ app.use(compression({
   },
 }));
 app.use(requestLogger);
-app.use(express.json({ limit: env.bodySizeLimit }));
+app.use(express.json({
+  limit: env.bodySizeLimit,
+  // Payment provider webhook signatures are verified against the exact raw bytes.
+  verify: (req, _res, buffer) => {
+    (req as typeof req & { rawBody?: string }).rawBody = buffer.toString("utf8");
+  },
+}));
 app.use(generalRateLimiter);
 
 app.use("/api/v1", routes);

@@ -2,7 +2,6 @@ import "dotenv/config";
 import bcrypt from "bcrypt";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { env } from "../src/config/env";
 
 /**
  * Explicit Docker-development seed.
@@ -17,7 +16,11 @@ import { env } from "../src/config/env";
 const assertDevelopmentDatabase = (): void => {
   const nodeEnv = process.env.NODE_ENV?.trim() || "development";
   const dockerized = process.env.DOCKERIZED?.trim().toLowerCase();
-  const databaseUrl = new URL(env.databaseUrl);
+  const configuredDatabaseUrl = process.env.DATABASE_URL?.trim();
+  if (!configuredDatabaseUrl) {
+    throw new Error("Refusing to run development seed: DATABASE_URL is required.");
+  }
+  const databaseUrl = new URL(configuredDatabaseUrl);
   const databaseName = decodeURIComponent(databaseUrl.pathname.replace(/^\//, ""));
 
   if (nodeEnv !== "development" || dockerized !== "true") {
@@ -46,8 +49,8 @@ const requiredValue = (key: string): string => {
 const roleAccounts = [
   {
     name: "System Administrator",
-    email: env.defaultAdminEmail.toLowerCase(),
-    password: env.defaultAdminPassword,
+    email: requiredValue("DEFAULT_ADMIN_EMAIL").toLowerCase(),
+    password: requiredValue("DEFAULT_ADMIN_PASSWORD"),
     role: "ADMIN" as const,
   },
   {
@@ -73,7 +76,7 @@ const currencies = [
 ] as const;
 
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: env.databaseUrl }),
+  adapter: new PrismaPg({ connectionString: requiredValue("DATABASE_URL") }),
 });
 
 async function main(): Promise<void> {
@@ -110,6 +113,54 @@ async function main(): Promise<void> {
           },
           create: { ...currency, isActive: true },
         });
+
+        // Seed synthetic development liquidity for reserve-page testing.
+        // Existing non-zero reserve records are preserved on subsequent runs.
+        const reserveDefaults: Record<string, { available: string; minimum: string }> = {
+          BDT: { available: "5000000.00", minimum: "500000.00" },
+          USD: { available: "50000.00", minimum: "5000.00" },
+          EUR: { available: "50000.00", minimum: "5000.00" },
+          GBP: { available: "40000.00", minimum: "4000.00" },
+          JPY: { available: "5000000", minimum: "500000" },
+        };
+        const reserveDefault = reserveDefaults[currency.code];
+        if (!reserveDefault) {
+          throw new Error(`Missing development reserve defaults for ${currency.code}`);
+        }
+
+        const existingReserve = await tx.currencyReserve.findUnique({
+          where: { currencyCode: currency.code },
+          select: {
+            availableReserve: true,
+            lockedReserve: true,
+            minimumReserve: true,
+          },
+        });
+
+        if (!existingReserve) {
+          await tx.currencyReserve.create({
+            data: {
+              currencyCode: currency.code,
+              availableReserve: reserveDefault.available,
+              lockedReserve: "0",
+              minimumReserve: reserveDefault.minimum,
+            },
+          });
+        } else if (
+          existingReserve.availableReserve.isZero() &&
+          existingReserve.lockedReserve.isZero() &&
+          existingReserve.minimumReserve.isZero()
+        ) {
+          // Upgrade only untouched zero-value rows created by the earlier seed.
+          // Never reset balances that have been adjusted during development.
+          await tx.currencyReserve.update({
+            where: { currencyCode: currency.code },
+            data: {
+              availableReserve: reserveDefault.available,
+              minimumReserve: reserveDefault.minimum,
+            },
+          });
+        }
       }
 
       for (const account of preparedAccounts) {
@@ -141,7 +192,8 @@ async function main(): Promise<void> {
     },
   );
 
-  console.log("Five currencies seeded successfully.");
+  console.log("Five currencies and their synthetic development reserve balances are seeded successfully.");
+  console.log("Existing non-zero reserve balances are preserved when this seed is rerun.");
   console.log("ADMIN, SUPPORT, and AUDITOR development accounts are ready.");
   console.log("Development seed completed.");
 }

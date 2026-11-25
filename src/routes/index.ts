@@ -34,15 +34,23 @@ import monitoringRoutes from "../monitoring/routes/monitoring.routes";
 import fraudRoutes from "../monitoring/routes/fraud.routes";
 import customerDecisionRoutes from "../monitoring/routes/customer-decision.routes";
 import fraudModelRoutes from "../monitoring/routes/ml-model.routes";
+import customerFxRoutes from "../transaction/routes/customer-fx.routes";
+import adminTreasuryFxRoutes from "../admin/routes/treasury-fx.routes";
+import depositRoutes from "../deposits/routes/deposit.routes";
+import adminDepositRoutes from "../deposits/routes/admin-deposit.routes";
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/admin", adminRoutes);
 router.use("/transactions", transactionRoutes);
+router.use("/deposits", depositRoutes);
+router.use("/admin/deposits", adminDepositRoutes);
 router.use("/transfers", transferRoutes);
 router.use("/beneficiaries", beneficiaryRoutes);
 router.use("/fx-requests", fxRequestRoutes);
+router.use("/fx", customerFxRoutes);
+router.use("/admin/treasury-fx", adminTreasuryFxRoutes);
 router.use("/admin/dashboard", adminDashboardRoutes);
 router.use("/admin/users", adminUserRoutes);
 router.use("/admin/accounts", adminAccountRoutes);

@@ -2,7 +2,6 @@ import "dotenv/config";
 import bcrypt from "bcrypt";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { env } from "../src/config/env";
 
 /**
  * E2E-only seed.
@@ -25,8 +24,13 @@ function assertE2eEnvironment(): void {
     );
   }
 
-  const databaseUrl = new URL(env.databaseUrl);
-  const redisUrl = new URL(env.redisUrl);
+  const databaseUrlValue = process.env.DATABASE_URL?.trim();
+  const redisUrlValue = process.env.REDIS_URL?.trim();
+  if (!databaseUrlValue || !redisUrlValue) {
+    throw new Error("Refusing to run E2E seed: DATABASE_URL and REDIS_URL are required.");
+  }
+  const databaseUrl = new URL(databaseUrlValue);
+  const redisUrl = new URL(redisUrlValue);
 
   const expectedDatabaseName = process.env.TEST_DATABASE_NAME?.trim();
   const expectedDatabaseHost = process.env.TEST_DATABASE_HOST?.trim().toLowerCase();
@@ -98,7 +102,7 @@ function assertE2eEnvironment(): void {
 assertE2eEnvironment();
 
 const adapter = new PrismaPg({
-  connectionString: env.databaseUrl,
+  connectionString: process.env.DATABASE_URL!.trim(),
 });
 
 const prisma = new PrismaClient({ adapter });
@@ -167,6 +171,18 @@ async function main(): Promise<void> {
       create: {
         ...currency,
         isActive: true,
+      },
+    });
+
+    // Ensure each test currency has a reserve row without resetting balances.
+    await prisma.currencyReserve.upsert({
+      where: { currencyCode: currency.code },
+      update: {},
+      create: {
+        currencyCode: currency.code,
+        availableReserve: "0",
+        lockedReserve: "0",
+        minimumReserve: "0",
       },
     });
   }

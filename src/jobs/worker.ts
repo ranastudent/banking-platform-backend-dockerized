@@ -28,6 +28,7 @@ import type {
 import { isNotificationEventPayload, isTransferCommittedPayload } from "./types";
 import { logger } from "../observability/logger";
 import { recordQueueFailure } from "../observability/metrics";
+import { runDepositReconciliation } from "../deposits/services/deposit.reconciliation.service";
 
 let workerConnection: ReturnType<typeof createBullMqConnection> | null = null;
 let worker: Worker<BackgroundJobData, void, BackgroundJobName> | null = null;
@@ -67,6 +68,7 @@ const createWorker = (): Worker<BackgroundJobData, void, BackgroundJobName> => {
   );
 };
 
+let depositReconciliationTimer: NodeJS.Timeout | null = null;
 let shuttingDown = false;
 const shutdownWorker = async (signal: string): Promise<void> => {
   if (shuttingDown) return;
@@ -76,6 +78,10 @@ const shutdownWorker = async (signal: string): Promise<void> => {
   const cleanup = async (label: string, action: () => Promise<unknown>) => {
     try { await action(); } catch (error) { errors.push(error); console.error(`[background-worker] ${label} cleanup failed`, error); }
   };
+  if (depositReconciliationTimer) {
+    clearInterval(depositReconciliationTimer);
+    depositReconciliationTimer = null;
+  }
   if (worker) await cleanup("worker", () => worker!.close());
   if (workerConnection && workerConnection.status !== "end") await cleanup("worker Redis", () => workerConnection!.quit());
   await cleanup("queue", () => closeBackgroundQueue());
@@ -117,6 +123,22 @@ const start = async (): Promise<void> => {
   await worker.waitUntilReady();
   if (shuttingDown) return;
   await scheduleDailyReport();
+  // Deposit expiry and provider settlement matching run in the worker process.
+  // This sweep is idempotent and never credits customer balances.
+  depositReconciliationTimer = setInterval(() => {
+    void runDepositReconciliation().catch((error: unknown) => {
+      logger.error("deposit.reconciliation.failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: process.env.NODE_ENV === "production" ? undefined : String(error),
+      });
+    });
+  }, 5 * 60 * 1000);
+  depositReconciliationTimer.unref();
+  void runDepositReconciliation().catch((error: unknown) => {
+    logger.error("deposit.reconciliation.initial_failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  });
   console.info("[background-worker] ready", { queue: BACKGROUND_QUEUE_NAME, concurrency: 5, dailyReportCron: env.backgroundJobs.dailyReportCron });
 };
 

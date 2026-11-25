@@ -34,6 +34,50 @@ describe("Authentication OTP API contract", () => {
       await prisma.passwordResetOtp.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.passwordResetToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
+
+      // Email verification creates the user's default account. Remove the
+      // account's balance rows and account before deleting the user to avoid
+      // accounts_user_id_fkey violations during test cleanup.
+      const accounts = await prisma.account.findMany({
+        where: { userId: { in: userIds } },
+        select: { id: true },
+      });
+      const accountIds = accounts.map((account) => account.id);
+      if (accountIds.length > 0) {
+        // Welcome-account creation also writes transactions, transaction legs,
+        // and ledger entries. Remove the complete account-linked transaction
+        // graph before deleting the account to satisfy foreign-key constraints.
+        const accountTransactions = await prisma.transaction.findMany({
+          where: {
+            OR: [
+              { sourceAccountId: { in: accountIds } },
+              { destinationAccountId: { in: accountIds } },
+            ],
+          },
+          select: { id: true },
+        });
+        const transactionIds = accountTransactions.map(({ id }) => id);
+
+        if (transactionIds.length > 0) {
+          await prisma.ledgerEntry.deleteMany({
+            where: { transactionId: { in: transactionIds } },
+          });
+          await prisma.transactionLeg.deleteMany({
+            where: { transactionId: { in: transactionIds } },
+          });
+          await prisma.transaction.deleteMany({
+            where: { id: { in: transactionIds } },
+          });
+        }
+
+        await prisma.accountBalance.deleteMany({
+          where: { accountId: { in: accountIds } },
+        });
+        await prisma.account.deleteMany({
+          where: { id: { in: accountIds } },
+        });
+      }
+
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     }
   });

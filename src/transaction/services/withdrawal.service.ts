@@ -24,6 +24,7 @@ type WithdrawalFailurePoint =
 type WithdrawalServiceOptions = {
   failurePoint?: WithdrawalFailurePoint;
   auditContext?: AuditContext;
+  transactionMetadata?: Prisma.InputJsonObject;
 };
 
 const simulateWithdrawalFailure = (
@@ -289,6 +290,7 @@ const createWithdrawalTransaction = async (
   accountId: string,
   amount: Prisma.Decimal,
   currencyCode: string,
+  additionalMetadata?: Prisma.InputJsonObject,
 ) => {
   return tx.transaction.create({
     data: {
@@ -305,6 +307,7 @@ const createWithdrawalTransaction = async (
         operation: "ACCOUNT_WITHDRAWAL",
         accountId,
         currencyCode,
+        ...(additionalMetadata ?? {}),
       },
     },
     select: {
@@ -544,6 +547,7 @@ export const prepareWithdrawal = async (
         account.id,
         amount,
         currency.code,
+        options.transactionMetadata,
       );
     
     simulateWithdrawalFailure(

@@ -194,6 +194,32 @@ describe("ADMIN Currency Reserve Read Authorization", () => {
     );
   });
 
+
+  it("should return the canonical reserve DTO field names in the list response", async () => {
+    const admin = await createTestUser("ADMIN");
+    const { currency, reserve } = await createTestCurrencyWithReserve();
+    const token = createAccessToken(admin);
+
+    const response = await request(app)
+      .get("/api/v1/admin/currency-reserves?page=1&limit=100")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+
+    const row = response.body.data.reserves.find(
+      (item: { currencyCode: string }) => item.currencyCode === currency.code,
+    );
+
+    expect(row).toBeDefined();
+    expect(row.id).toBe(reserve.id);
+    expect(row.availableReserve).toBe("10000");
+    expect(row.lockedReserve).toBe("1000");
+    expect(row.minimumReserve).toBe("2000");
+    expect(row).not.toHaveProperty("availableBalance");
+    expect(row).not.toHaveProperty("reservedBalance");
+  });
+
   it("should allow AUDITOR to view a currency reserve", async () => {
     const auditor = await createTestUser("AUDITOR");
     const { currency, reserve } =

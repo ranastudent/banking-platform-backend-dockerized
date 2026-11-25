@@ -1,16 +1,24 @@
 import { z } from "zod";
 
+// The public transfer API uses customer-facing account numbers for BOTH
+// accounts. Internal database UUIDs must never be accepted as account numbers.
+const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){2}[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const accountNumberSchema = z
+  .string()
+  .trim()
+  .min(4, "Account number must contain at least 4 characters")
+  .max(64, "Account number must not exceed 64 characters")
+  .refine((value) => !UUID_PATTERN.test(value), {
+    message: "Use the customer-facing account number, not an internal account UUID",
+  });
+
 export const transferSchema = z
   .object({
-    senderAccount: z
-      .string()
-      .trim()
-      .min(1, "Sender account is required"),
+    // Both values are account numbers (not Account.id UUIDs).
+    senderAccount: accountNumberSchema,
 
-    receiverAccount: z
-      .string()
-      .trim()
-      .min(1, "Receiver account is required"),
+    receiverAccount: accountNumberSchema,
 
     amount: z
       .string()

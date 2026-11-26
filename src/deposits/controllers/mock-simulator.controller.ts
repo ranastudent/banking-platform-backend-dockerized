@@ -33,7 +33,7 @@ export const completeMockDeposit = async (req: Request, res: Response): Promise<
   ensureSimulator();
   const user = requireUser(req);
   const provider = normalizeProviderSlug(String(req.params.provider || ""));
-  if (!provider || !["BKASH", "NAGAD", "ROCKET", "WISE"].includes(provider)) {
+  if (!provider || !["BKASH", "NAGAD", "ROCKET", "WISE", "STRIPE"].includes(provider)) {
     throw new AppError("Unsupported mock provider", 400, ErrorCode.BAD_REQUEST);
   }
   const depositId = String(req.params.depositId || "");
@@ -91,7 +91,7 @@ export const completeMockDeposit = async (req: Request, res: Response): Promise<
     data: {
       ...result,
       simulator: true,
-      message: "Virtual transaction only. No real bKash/Nagad/Rocket/Wise payment occurred.",
+      message: "Virtual transaction only. No real mobile-wallet or card payment occurred.",
     },
     requestId: req.requestId,
   });

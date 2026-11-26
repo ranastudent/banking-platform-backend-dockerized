@@ -4,7 +4,7 @@ import { AppError } from "../../../errors/AppError";
 import { ErrorCode } from "../../../errors/errorCodes";
 import type { DepositProviderAdapter, ProviderPaymentResult } from "../../types/deposit.types";
 
-const providers: PaymentProvider[] = ["BKASH", "NAGAD", "ROCKET", "WISE"];
+const providers: PaymentProvider[] = ["BKASH", "NAGAD", "ROCKET", "WISE", "STRIPE"];
 
 const makeMockAdapter = (provider: PaymentProvider): DepositProviderAdapter => ({
   provider,

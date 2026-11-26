@@ -748,6 +748,7 @@ enum TransactionProvider {
   PAYPAL
   PAYONEER
   WISE
+  STRIPE
 }
 
 enum TransactionEntryType {
@@ -797,6 +798,7 @@ enum PaymentProvider {
   PAYPAL
   PAYONEER
   WISE
+  STRIPE
 }
 
 enum ExternalProviderTransactionStatus {

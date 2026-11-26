@@ -49,3 +49,12 @@ DEPOSIT_DEMO_ENABLED=false
 DEPOSIT_LIMIT_TIMEZONE=Asia/Dhaka
 ```
 until a provider adapter is implemented and sandbox-tested.
+
+
+## Card and mobile payment update (2026-11-26)
+- Added Stripe Checkout adapter for card payments and `STRIPE` enum migration.
+- Visa/Mastercard credit/debit are supported as Stripe card types; Stripe/card issuer detects the network and card type.
+- Added Stripe test/live environment variables and setup instructions in `CARD_AND_MOBILE_PAYMENT_SETUP.md`.
+- Added Stripe mock provider to simulator and updated method endpoint metadata.
+- Existing bKash sandbox adapter remains; Nagad/Rocket remain simulator-only until official provider sandbox contract and merchant credentials are configured.
+- Backend-only source was supplied; no React/Next.js frontend source was present to update the payment UI.

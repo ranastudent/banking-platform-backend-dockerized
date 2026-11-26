@@ -31,3 +31,14 @@ This calls the existing account withdrawal debit/ledger flow and records synthet
 - `PAYMENT_PROVIDER_MODE=mock` must never be used in production. The code rejects simulator endpoints in production.
 - Do not use real recipient phone/account numbers in simulator requests.
 - Build, Prisma validation, migration, and automated test suite were not run in this environment; run locally before relying on the patch.
+
+
+## Stripe card integration patch (2026-11-26)
+- Added `STRIPE` to the Prisma PaymentProvider enum and a migration.
+- Added Stripe Checkout Session adapter using Stripe REST API (no card data is handled by this backend).
+- Supports Visa/Mastercard credit and debit cards through Stripe's `card` payment method.
+- Stripe webhook uses the `Stripe-Signature` header and validates timestamped HMAC before server-side Checkout Session verification.
+- Added Stripe to mock simulator for local no-money testing.
+- Added mobile/card method metadata to `GET /api/v1/deposits/methods`.
+- Real Nagad/Rocket provider-specific sandbox/live adapters remain unimplemented; their mock flows are available only in local simulator mode.
+- This patch has not been run against Stripe credentials or a real merchant account.

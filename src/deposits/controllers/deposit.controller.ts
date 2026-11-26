@@ -25,6 +25,16 @@ export const getDepositMethods = async (req: Request, res: Response): Promise<vo
       externalEnabled: depositConfig.enabled,
       methods: EXTERNAL_DEPOSIT_PROVIDERS.map((provider) => ({
         provider,
+        displayName: provider === "BKASH" ? "bKash" : provider === "NAGAD" ? "Nagad" :
+          provider === "ROCKET" ? "Rocket" : provider === "STRIPE" ? "Card (Visa / Mastercard)" :
+          provider === "WISE" ? "Wise" : provider,
+        category: ["BKASH", "NAGAD", "ROCKET"].includes(provider) ? "MOBILE_WALLET" :
+          provider === "STRIPE" ? "CARD" : "INTERNATIONAL_PAYMENT",
+        ...(provider === "STRIPE" ? {
+          cardNetworks: ["VISA", "MASTERCARD"],
+          cardTypes: ["CREDIT", "DEBIT"],
+          note: "Card network/type is detected by the payment processor from the entered card; customer should not enter card details in this application."
+        } : {}),
         enabled: depositConfig.enabled && hasDepositProviderAdapter(provider),
         status: hasDepositProviderAdapter(provider)
           ? ((process.env.PAYMENT_PROVIDER_MODE || "mock").toLowerCase() === "mock" ? "MOCK_SIMULATOR" : "CONFIGURED")
@@ -104,7 +114,7 @@ export const listDeposits = async (req: Request, res: Response): Promise<void> =
   const status = typeof req.query.status === "string" ? req.query.status : undefined;
   const provider = typeof req.query.provider === "string" ? req.query.provider.toUpperCase() : undefined;
   const allowedStatuses = ["INITIATED","PAYMENT_PENDING","PROCESSING","CONFIRMED","SETTLED","FAILED","EXPIRED","CANCELLED","REVERSED"];
-  const allowedProviders = ["INTERNAL","BKASH","NAGAD","ROCKET","PAYPAL","PAYONEER","WISE"];
+  const allowedProviders = ["INTERNAL","BKASH","NAGAD","ROCKET","PAYPAL","PAYONEER","WISE","STRIPE"];
   if (status && !allowedStatuses.includes(status)) throw new AppError("Invalid deposit status", 400, ErrorCode.BAD_REQUEST);
   if (provider && !allowedProviders.includes(provider)) throw new AppError("Invalid deposit provider", 400, ErrorCode.BAD_REQUEST);
   const data = await getCustomerDeposits(user, {
@@ -136,7 +146,7 @@ export const receiveDepositWebhook = async (req: Request, res: Response): Promis
   if (!provider) throw new AppError("Unsupported provider", 404, ErrorCode.NOT_FOUND);
   const rawBody = (req as Request & { rawBody?: string }).rawBody;
   if (!rawBody) throw new AppError("Webhook raw body unavailable", 400, ErrorCode.BAD_REQUEST);
-  const signature = req.get("x-provider-signature") ?? req.get("x-signature") ?? req.get("x-signature-sha256");
+  const signature = req.get("stripe-signature") ?? req.get("x-provider-signature") ?? req.get("x-signature") ?? req.get("x-signature-sha256");
   const adapter = getDepositProviderAdapter(provider);
 
   // Provider-specific adapter validates the signature and maps the provider's
@@ -185,8 +195,14 @@ export const receiveDepositWebhook = async (req: Request, res: Response): Promis
     ) {
       throw new AppError("Provider payment verification did not match webhook", 409, ErrorCode.CONFLICT);
     }
+    const verifiedStatus = provider === "STRIPE" && normalized.eventType === "checkout.session.expired"
+      ? "CANCELLED"
+      : provider === "STRIPE" && normalized.eventType === "checkout.session.async_payment_failed"
+        ? "FAILED"
+        : verified.status;
     const data = await settleVerifiedDeposit({
       ...verified,
+      status: verifiedStatus,
       provider,
       eventId: normalized.eventId,
       eventType: normalized.eventType,

@@ -1,6 +1,7 @@
 import { registerDepositProviderAdapter } from "./provider.registry";
 import { bkashAdapter } from "./adapters/bkash.adapter";
 import { wiseAdapter } from "./adapters/wise.adapter";
+import { stripeAdapter } from "./adapters/stripe.adapter";
 import { createMockDepositAdapters } from "./adapters/mock.adapter";
 
 /**
@@ -26,6 +27,16 @@ export const registerConfiguredDepositAdapters = (): void => {
     if (has("WISE_WEBHOOK_SECRET", "WISE_INCOMING_PAYMENT_INSTRUCTIONS") &&
         (has("WISE_ACCESS_TOKEN") || has("WISE_CLIENT_ID", "WISE_CLIENT_SECRET"))) {
       registerDepositProviderAdapter(wiseAdapter);
+    }
+    // Stripe Checkout (card payments) requires a Stripe test/live secret key,
+    // webhook signing secret, and HTTPS return URLs.
+    if (has("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_SUCCESS_URL", "STRIPE_CANCEL_URL")) {
+      const stripeKey = process.env.STRIPE_SECRET_KEY!.trim();
+      const expectedPrefix = mode === "sandbox" ? "sk_test_" : "sk_live_";
+      if (!stripeKey.startsWith(expectedPrefix)) {
+        throw new Error(`Stripe key does not match PAYMENT_PROVIDER_MODE=${mode}; expected ${expectedPrefix}...`);
+      }
+      registerDepositProviderAdapter(stripeAdapter);
     }
   }
 };

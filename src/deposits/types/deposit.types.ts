@@ -1,7 +1,7 @@
 import type { PaymentProvider } from "@prisma/client";
 
 export const EXTERNAL_DEPOSIT_PROVIDERS: PaymentProvider[] = [
-  "BKASH", "NAGAD", "ROCKET", "WISE", "PAYPAL", "PAYONEER",
+  "BKASH", "NAGAD", "ROCKET", "WISE", "PAYPAL", "PAYONEER", "STRIPE",
 ];
 
 export type ProviderPaymentResult = {

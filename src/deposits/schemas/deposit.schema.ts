@@ -8,7 +8,7 @@ export const depositQuoteSchema = z.object({
   accountId: z.string().uuid(),
   amount: positiveDecimal,
   currency: z.string().trim().length(3).regex(/^[A-Za-z]{3}$/).transform((v) => v.toUpperCase()),
-  provider: z.enum(["BKASH", "NAGAD", "ROCKET", "WISE", "PAYPAL", "PAYONEER"]),
+  provider: z.enum(["BKASH", "NAGAD", "ROCKET", "WISE", "PAYPAL", "PAYONEER", "STRIPE"]),
 }).strict();
 
 export const createDepositSchema = depositQuoteSchema;

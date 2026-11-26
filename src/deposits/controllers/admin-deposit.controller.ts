@@ -24,7 +24,7 @@ export const adminListDeposits = async (req: Request, res: Response): Promise<vo
   const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 100) : undefined;
   const currency = typeof req.query.currency === "string" ? req.query.currency.trim().toUpperCase() : undefined;
   const validStatuses = ["INITIATED", "PAYMENT_PENDING", "PROCESSING", "CONFIRMED", "SETTLED", "FAILED", "EXPIRED", "CANCELLED", "REVERSED"];
-  const validProviders = ["INTERNAL", "BKASH", "NAGAD", "ROCKET", "PAYPAL", "PAYONEER", "WISE"];
+  const validProviders = ["INTERNAL", "BKASH", "NAGAD", "ROCKET", "PAYPAL", "PAYONEER", "WISE", "STRIPE"];
   if (status && !validStatuses.includes(status)) throw new AppError("Invalid status filter", 400, ErrorCode.BAD_REQUEST);
   if (provider && !validProviders.includes(provider)) throw new AppError("Invalid provider filter", 400, ErrorCode.BAD_REQUEST);
   const startDate = typeof req.query.startDate === "string" ? new Date(req.query.startDate) : undefined;

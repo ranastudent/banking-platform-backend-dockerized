@@ -55,7 +55,10 @@ const enforceDepositLimitsInTransaction = async (
 ): Promise<void> => {
   // Serialize same-customer deposit initiation so concurrent requests cannot
   // both pass the daily/monthly limits using stale aggregate values.
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`deposit-limit:${userId}`}))`;
+  await tx.$queryRaw<Array<{ lock_acquired: number }>>`
+  SELECT 1::int AS lock_acquired
+  FROM pg_advisory_xact_lock(hashtext(${`deposit-limit:${userId}`}))
+`;
   const now = new Date();
   const startDay = getDepositPeriodStart(now, "day");
   const startMonth = getDepositPeriodStart(now, "month");
@@ -512,13 +515,20 @@ export const createDemoFunding = async (user: AuthUser, input: DemoFundingInput,
   if (amount.decimalPlaces() > currency.decimalPlaces) throw new AppError("Amount precision exceeds currency decimal places", 400, ErrorCode.BAD_REQUEST);
   const ref = `DEMO-${uuid()}`;
   return prisma.$transaction(async (tx) => {
+    // Keep lock order consistent with external deposit initiation:
+    // deposit-limit advisory lock first, then the account row lock.
+    // This avoids a deadlock when demo and external deposits run concurrently.
+    await enforceDepositLimitsInTransaction(tx, account.userId, amount, currency.code, true);
+
     const lockedAccount = await tx.$queryRaw<Array<{ id: string; user_id: string; status: string }>>`
       SELECT id, user_id, status FROM accounts WHERE id = CAST(${input.accountId} AS uuid) FOR UPDATE
     `;
     if (!lockedAccount[0]) throw new AppError("Account not found", 404, ErrorCode.RESOURCE_NOT_FOUND);
+    if (lockedAccount[0].user_id !== account.userId) {
+      throw new AppError("Account ownership changed; please retry", 409, ErrorCode.CONFLICT);
+    }
     if (user.role === "CUSTOMER" && lockedAccount[0].user_id !== user.id) throw new AppError("Account ownership mismatch", 403, ErrorCode.FORBIDDEN);
     if (lockedAccount[0].status !== "ACTIVE") throw new AppError("Account is not active", 409, ErrorCode.CONFLICT);
-    await enforceDepositLimitsInTransaction(tx, account.userId, amount, currency.code, true);
     const transaction = await tx.transaction.create({
       data: {
         reference: ref, type: "DEPOSIT", status: "COMPLETED", amount,

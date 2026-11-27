@@ -32,13 +32,45 @@ const request = async (path: string, init: RequestInit = {}): Promise<any> => {
     try { data = text ? JSON.parse(text) : {}; }
     catch { throw new AppError("Invalid Stripe API response", 502, ErrorCode.BAD_GATEWAY); }
     if (!response.ok) {
-      const message = typeof data?.error?.message === "string" ? data.error.message : "Stripe API request failed";
+      const stripeError = data?.error;
+      const message = typeof stripeError?.message === "string"
+        ? stripeError.message
+        : "Stripe API request failed";
+
+      // Log safe diagnostic fields only. Never log the secret key or request body.
+      console.error(JSON.stringify({
+        level: "error",
+        event: "stripe.api_request_failed",
+        path,
+        httpStatus: response.status,
+        stripeErrorType: typeof stripeError?.type === "string" ? stripeError.type : undefined,
+        stripeErrorCode: typeof stripeError?.code === "string" ? stripeError.code : undefined,
+        stripeErrorParam: typeof stripeError?.param === "string" ? stripeError.param : undefined,
+        stripeRequestId: response.headers.get("request-id") || undefined,
+        message,
+      }));
+
       throw new AppError(`${message} (HTTP ${response.status})`, 502, ErrorCode.BAD_GATEWAY);
     }
     return data;
   } catch (error) {
     if (error instanceof AppError) throw error;
-    throw new AppError("Stripe API unavailable or timed out", 502, ErrorCode.BAD_GATEWAY);
+
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    console.error(JSON.stringify({
+      level: "error",
+      event: isTimeout ? "stripe.api_request_timeout" : "stripe.api_request_unavailable",
+      path,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+      timeoutMs,
+    }));
+
+    throw new AppError(
+      isTimeout ? "Stripe API request timed out" : "Stripe API unavailable",
+      502,
+      ErrorCode.BAD_GATEWAY,
+    );
   } finally { clearTimeout(timer); }
 };
 
@@ -69,15 +101,45 @@ const retrieveCheckoutSession = async (sessionId: string): Promise<any> => {
   return request(`/v1/checkout/sessions/${encodeURIComponent(sessionId)}`);
 };
 
+/**
+ * Prevent a placeholder domain from being sent to Stripe. Stripe redirects the
+ * customer exactly to success_url/cancel_url, so an example hostname causes
+ * the browser to leave Checkout and land on a non-existent website.
+ */
+const getCheckoutReturnUrl = (key: "STRIPE_SUCCESS_URL" | "STRIPE_CANCEL_URL"): string => {
+  const value = required(key);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AppError(`${key} must be an absolute URL`, 503, ErrorCode.SERVICE_UNAVAILABLE);
+  }
+  if (parsed.hostname === "your-frontend.example" || parsed.hostname.endsWith(".example")) {
+    throw new AppError(
+      `${key} still uses an example hostname. Set it to your real frontend URL (for local testing: http://localhost:5173/customer/deposit${key === "STRIPE_SUCCESS_URL" ? "?session_id={CHECKOUT_SESSION_ID}" : "?stripe_cancelled=1"}).`,
+      503,
+      ErrorCode.SERVICE_UNAVAILABLE,
+    );
+  }
+  if (key === "STRIPE_SUCCESS_URL" && !value.includes("{CHECKOUT_SESSION_ID}")) {
+    throw new AppError(
+      "STRIPE_SUCCESS_URL must include the literal {CHECKOUT_SESSION_ID} placeholder so the return page can identify the Checkout Session",
+      503,
+      ErrorCode.SERVICE_UNAVAILABLE,
+    );
+  }
+  return value;
+};
+
 export const stripeAdapter: DepositProviderAdapter = {
   provider,
   createPayment: async (input): Promise<ProviderPaymentResult> => {
     const currency = input.currency.toLowerCase();
     const params = new URLSearchParams();
     params.set("mode", "payment");
-    params.set("payment_method_types[0]", "card");
-    params.set("success_url", required("STRIPE_SUCCESS_URL"));
-    params.set("cancel_url", required("STRIPE_CANCEL_URL"));
+    params.set("allowed_payment_method_types[0]", "card");
+    params.set("success_url", getCheckoutReturnUrl("STRIPE_SUCCESS_URL"));
+    params.set("cancel_url", getCheckoutReturnUrl("STRIPE_CANCEL_URL"));
     params.set("client_reference_id", input.merchantReference);
     params.set("metadata[depositId]", input.depositId);
     params.set("metadata[merchantReference]", input.merchantReference);

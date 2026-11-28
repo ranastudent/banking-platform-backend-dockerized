@@ -42,7 +42,7 @@ export type DepositProviderAdapter = {
     netAmount: string;
     currency: string;
   }) => Promise<ProviderPaymentResult>;
-  verifyPayment: (providerPaymentId: string) => Promise<Omit<VerifiedProviderPayment, "eventId" | "eventType">>;
+  verifyPayment: (providerPaymentId: string, options?: { execute?: boolean }) => Promise<Omit<VerifiedProviderPayment, "eventId" | "eventType">>;
   lookupPaymentByMerchantReference: (merchantReference: string) => Promise<Omit<VerifiedProviderPayment, "eventId" | "eventType"> | null>;
   parseAndVerifyWebhook: (rawBody: string, signature: string | undefined, body: unknown) => Promise<ProviderWebhookEvent>;
 };

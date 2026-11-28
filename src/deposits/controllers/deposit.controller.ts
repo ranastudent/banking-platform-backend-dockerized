@@ -236,8 +236,11 @@ export const receiveDepositWebhook = async (req: Request, res: Response): Promis
 export const receiveBkashCallback = async (req: Request, res: Response): Promise<void> => {
   const paymentID = typeof req.query.paymentID === "string" ? req.query.paymentID : "";
   if (!paymentID) throw new AppError("bKash callback is missing paymentID", 400, ErrorCode.BAD_REQUEST);
+  const callbackStatus = typeof req.query.status === "string" ? req.query.status.toLowerCase() : "";
   const adapter = getDepositProviderAdapter("BKASH");
-  const verified = await adapter.verifyPayment(paymentID);
+  // The callback status is not proof of payment; it only controls whether we
+  // attempt the required execute step. Provider API verification still follows.
+  const verified = await adapter.verifyPayment(paymentID, { execute: callbackStatus === "success" });
   if (verified.provider !== "BKASH" || verified.providerPaymentId !== paymentID || !verified.merchantReference) {
     throw new AppError("bKash payment could not be verified", 409, ErrorCode.CONFLICT);
   }

@@ -64,8 +64,33 @@ const api = async (path: string, method: string, body?: unknown): Promise<any> =
 };
 
 const queryPayment = async (paymentID: string): Promise<any> => {
-  // v1.2.0-beta Query Payment is a POST operation in the merchant API.
+  // Tokenized Checkout v1.2.0-beta Query Payment is a POST operation.
   return api("/payment/status", "POST", { paymentID });
+};
+
+const executePayment = async (paymentID: string): Promise<any> => {
+  // bKash requires Execute Payment after the payer approves checkout.
+  return api("/execute", "POST", { paymentID });
+};
+
+const normalizeStatus = (data: any): string =>
+  String(data?.transactionStatus || data?.status || "").trim().toLowerCase();
+
+const toVerifiedPayment = (data: any, paymentID: string) => {
+  const status = normalizeStatus(data);
+  const success = status === "completed" || status === "success";
+  return {
+    provider,
+    providerPaymentId: String(data.paymentID || paymentID),
+    merchantReference: String(data.merchantInvoiceNumber || data.payerReference || ""),
+    status: success ? "SUCCESS" as const
+      : status.includes("cancel") ? "CANCELLED" as const
+      : status.includes("fail") || status.includes("reject") ? "FAILED" as const
+      : "PROCESSING" as const,
+    amount: String(data.amount || "0"),
+    currency: String(data.currency || "BDT").toUpperCase(),
+    ...(data.trxID ? { providerReference: String(data.trxID) } : {}),
+  };
 };
 
 export const bkashAdapter: DepositProviderAdapter = {
@@ -89,19 +114,46 @@ export const bkashAdapter: DepositProviderAdapter = {
       metadata: { paymentID: response.paymentID, merchantInvoiceNumber: input.merchantReference },
     };
   },
-  verifyPayment: async (paymentID) => {
-    const data = await queryPayment(paymentID);
-    const status = String(data.transactionStatus || data.status || "").toLowerCase();
-    const success = status === "completed" || status === "success";
-    return {
-      provider,
-      providerPaymentId: String(data.paymentID || paymentID),
-      merchantReference: String(data.merchantInvoiceNumber || data.payerReference || ""),
-      status: success ? "SUCCESS" : status.includes("cancel") ? "CANCELLED" : status.includes("fail") ? "FAILED" : "PROCESSING",
-      amount: String(data.amount || "0"),
-      currency: String(data.currency || "BDT").toUpperCase(),
-      ...(data.trxID ? { providerReference: String(data.trxID) } : {}),
-    };
+  verifyPayment: async (paymentID, options) => {
+    // Query first so a repeated callback does not blindly execute an already
+    // completed payment. bKash callbacks are customer redirects, not proof of
+    // payment; the provider's API response is authoritative.
+    const queried = await queryPayment(paymentID);
+    const queriedStatus = normalizeStatus(queried);
+    if (
+      queriedStatus === "completed" || queriedStatus === "success" ||
+      queriedStatus.includes("cancel") || queriedStatus.includes("fail") ||
+      queriedStatus.includes("reject") || queriedStatus.includes("expire")
+    ) {
+      return toVerifiedPayment(queried, paymentID);
+    }
+
+    // Only the successful customer-return callback explicitly opts into
+    // Execute Payment. A cancel/failure callback must never trigger capture.
+    if (options?.execute !== true) return toVerifiedPayment(queried, paymentID);
+
+    // Tokenized Checkout flow: create -> payer approval -> execute -> verify.
+    // Execute only non-terminal payments. If execute reports an error because
+    // another callback already executed it, query again before failing.
+    try {
+      const executed = await executePayment(paymentID);
+      const executedStatus = normalizeStatus(executed);
+      if (executedStatus === "completed" || executedStatus === "success") {
+        return toVerifiedPayment(executed, paymentID);
+      }
+    } catch (executeError) {
+      const afterExecute = await queryPayment(paymentID).catch(() => null);
+      const afterStatus = normalizeStatus(afterExecute);
+      if (afterExecute && (afterStatus === "completed" || afterStatus === "success")) {
+        return toVerifiedPayment(afterExecute, paymentID);
+      }
+      throw executeError;
+    }
+
+    // Some responses do not include transactionStatus in Execute Payment.
+    // Query again and only accept the provider's confirmed result.
+    const finalStatus = await queryPayment(paymentID);
+    return toVerifiedPayment(finalStatus, paymentID);
   },
   lookupPaymentByMerchantReference: async (merchantReference) => {
     // Search Transaction API requires trxID; query-by-invoice is not guaranteed by the public API.

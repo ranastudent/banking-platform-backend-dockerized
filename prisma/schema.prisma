@@ -81,7 +81,7 @@ model DepositRequest {
   createdAt             DateTime                      @default(now()) @map("created_at")
   updatedAt             DateTime                      @updatedAt @map("updated_at")
   user                  User                          @relation(fields: [userId], references: [id])
-  account               Account                       @relation(fields: [accountId], references: [id])
+  account               Account                       @relation(fields: [accountId, userId], references: [id, userId])
   transaction           Transaction?                  @relation(fields: [transactionId], references: [id])
   currency              Currency                      @relation(fields: [currencyCode], references: [code])
   providerPayments      DepositProviderPayment[]
@@ -175,6 +175,7 @@ model DepositReconciliationRecord {
   createdAt         DateTime                    @default(now()) @map("created_at")
   depositRequest    DepositRequest?             @relation(fields: [depositRequestId], references: [id])
   settlement        DepositProviderSettlement?  @relation(fields: [settlementId], references: [id])
+  performedByUser   User?                       @relation(fields: [performedByUserId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([depositRequestId, createdAt])
@@ -195,6 +196,7 @@ model GeneralLedgerAccount {
   journalLines JournalLine[]
 
   @@unique([code, currencyCode])
+  @@unique([id, currencyCode])
   @@index([accountType, currencyCode])
   @@map("general_ledger_accounts")
 }
@@ -227,7 +229,7 @@ model JournalLine {
   credit         Decimal              @default(0) @db.Decimal(24, 8)
   createdAt      DateTime             @default(now()) @map("created_at")
   journalEntry   JournalEntry         @relation(fields: [journalEntryId], references: [id])
-  account        GeneralLedgerAccount @relation(fields: [accountId], references: [id])
+  account        GeneralLedgerAccount @relation(fields: [accountId, currencyCode], references: [id, currencyCode])
   currency       Currency             @relation(fields: [currencyCode], references: [code])
 
   @@index([journalEntryId])
@@ -273,6 +275,7 @@ model User {
 
   transactionDecisionExplanations TransactionDecisionExplanation[]
   depositRequests                 DepositRequest[]
+  performedReconciliationRecords DepositReconciliationRecord[]
 
   @@index([role])
   @@index([status])
@@ -300,6 +303,7 @@ model Account {
   fraudAlerts             FraudAlert[]
   depositRequests         DepositRequest[]
 
+  @@unique([id, userId])
   @@index([userId])
   @@index([status])
   @@map("accounts")
@@ -493,7 +497,7 @@ model ForeignCurrencyRequest {
   createdAt            DateTime                     @default(now()) @map("created_at")
   updatedAt            DateTime                     @updatedAt @map("updated_at")
   approvalRecords      ApprovalRecord[]
-  account              Account                      @relation(fields: [accountId], references: [id])
+  account              Account                      @relation(fields: [accountId, userId], references: [id, userId])
   requestedCurrencyRef Currency                     @relation(fields: [requestedCurrency], references: [code])
   reviewer             User?                        @relation("FXRequestReviewer", fields: [reviewedBy], references: [id])
   user                 User                         @relation(fields: [userId], references: [id])
